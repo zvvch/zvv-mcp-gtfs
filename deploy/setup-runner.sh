@@ -25,25 +25,33 @@ RUNNER_DIR="/home/${RUNNER_USER}/actions-runner"
 REPO="${REPO:-zvvch/mcp-gtfs}"
 LABELS="${LABELS:-self-hosted,linux,x64,gtfs}"
 
+# Token kann als Argument, Env-Var, oder interaktiv uebergeben werden
+# Usage: setup-runner.sh <TOKEN>
+#    or: RUNNER_TOKEN=xxx setup-runner.sh
+RUNNER_TOKEN="${1:-${RUNNER_TOKEN:-}}"
+
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}  GitHub Actions Runner Setup${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-# Token abfragen
-echo -e "${YELLOW}Runner-Token wird benoetigt:${NC}"
-echo -e "  1. https://github.com/${REPO}/settings/actions/runners/new"
-echo -e "  2. Kopiere den Token aus dem ./config.sh Befehl"
-echo -e "     (beginnt meist mit A...)"
-echo ""
-read -rp "  Runner Registration Token: " RUNNER_TOKEN
-echo ""
+if [ -z "$RUNNER_TOKEN" ]; then
+  echo -e "${YELLOW}Runner-Token wird benoetigt:${NC}"
+  echo -e "  1. https://github.com/${REPO}/settings/actions/runners/new"
+  echo -e "  2. Kopiere den Token aus dem ./config.sh Befehl"
+  echo -e "     (beginnt meist mit A...)"
+  echo ""
+  read -rp "  Runner Registration Token: " RUNNER_TOKEN </dev/tty
+  echo ""
+fi
 
 if [ -z "$RUNNER_TOKEN" ]; then
-  err "Kein Token angegeben!"
+  err "Kein Token angegeben! Usage: setup-runner.sh <TOKEN>"
   exit 1
 fi
+
+ok "Token erhalten"
 
 # ── Dependencies ──────────────────────────────────────────────────
 info "Installiere Abhaengigkeiten..."
