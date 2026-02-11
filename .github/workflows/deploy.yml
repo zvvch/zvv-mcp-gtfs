@@ -1,13 +1,15 @@
-name: Deploy to LXC
+name: Test & Deploy
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:  # Manueller Trigger via GitHub UI
 
 concurrency:
-  group: deploy
-  cancel-in-progress: false  # Laufendes Deploy nicht abbrechen
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -22,50 +24,58 @@ jobs:
           cache: npm
 
       - run: npm ci
-
       - run: npm test
 
   deploy:
-    name: Deploy to Proxmox LXC
+    name: Deploy to LXC
     needs: test
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.PVE_HOST }}
-          username: ${{ secrets.PVE_USER }}
-          key: ${{ secrets.PVE_SSH_KEY }}
-          port: ${{ secrets.PVE_PORT || 22 }}
-          script_stop: true
-          timeout: 120s
-          script: |
-            set -e
-            VMID="${{ secrets.LXC_VMID || '105' }}"
-            echo "=== Deploying to LXC $VMID ==="
+      - name: Trigger deploy webhook
+        run: |
+          echo "=== Triggering deploy on gtfs.zvv.dev ==="
 
-            # Code aktualisieren
-            pct exec "$VMID" -- su - gtfs -c "cd /home/gtfs/app && git pull --ff-only"
+          RESPONSE=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"${{ github.sha }}","actor":"${{ github.actor }}"}' \
+            "${{ secrets.DEPLOY_URL }}" \
+            --max-time 30 \
+            -w "\n%{http_code}" 2>&1) || true
 
-            # Dependencies installieren (nur wenn package-lock geaendert)
-            pct exec "$VMID" -- su - gtfs -c "cd /home/gtfs/app && npm install --production --no-fund --no-audit"
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | head -n -1)
 
-            # Server neustarten
-            pct exec "$VMID" -- systemctl restart gtfs
+          echo "Response: $BODY"
+          echo "HTTP Status: $HTTP_CODE"
 
-            # Health-Check (max 15 Versuche)
-            echo "Warte auf Server..."
-            for i in $(seq 1 15); do
-              if pct exec "$VMID" -- curl -sf http://localhost:3000/health >/dev/null 2>&1; then
-                echo "=== Deploy erfolgreich ==="
-                pct exec "$VMID" -- curl -sf http://localhost:3000/health | python3 -m json.tool 2>/dev/null || true
-                exit 0
-              fi
-              sleep 2
-            done
-
-            echo "FEHLER: Server antwortet nicht nach Deploy!"
-            pct exec "$VMID" -- journalctl -u gtfs --no-pager -n 30
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Deploy fehlgeschlagen (HTTP $HTTP_CODE)"
             exit 1
+          fi
+
+          echo "Deploy gestartet – warte auf Restart..."
+
+      - name: Wait for server restart
+        run: |
+          HEALTH_URL="${{ secrets.DEPLOY_URL }}"
+          HEALTH_URL="${HEALTH_URL%/api/deploy}/health"
+
+          echo "Health-Check: $HEALTH_URL"
+          echo "Warte 15s auf Restart..."
+          sleep 15
+
+          for i in $(seq 1 12); do
+            if HEALTH=$(curl -sf "$HEALTH_URL" --max-time 10 2>&1); then
+              echo "=== Server ist online ==="
+              echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
+              exit 0
+            fi
+            echo "Versuch $i/12 – noch nicht bereit..."
+            sleep 5
+          done
+
+          echo "::error::Server antwortet nicht nach 75s!"
+          exit 1
