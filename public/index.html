@@ -255,6 +255,43 @@
       letter-spacing: 0.4px;
       position: sticky;
       top: 0;
+      z-index: 1;
+    }
+
+    /* Sortable Headers */
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+      white-space: nowrap;
+    }
+
+    th.sortable:hover {
+      color: var(--text);
+    }
+
+    th.sortable::after {
+      content: '\2195';
+      margin-left: 6px;
+      opacity: 0.3;
+      font-size: 10px;
+    }
+
+    th.sortable.sort-asc::after {
+      content: '\2191';
+      opacity: 0.9;
+      color: var(--accent);
+    }
+
+    th.sortable.sort-desc::after {
+      content: '\2193';
+      opacity: 0.9;
+      color: var(--accent);
+    }
+
+    th.sortable.sort-asc,
+    th.sortable.sort-desc {
+      color: var(--text);
     }
 
     td {
@@ -1346,6 +1383,59 @@ fetch('/api/query', {
       return n != null ? Number(n).toLocaleString('de-CH') : '-';
     }
 
+    // --- Sortable Tables ---
+    function makeSortable(tableWrapEl) {
+      const table = tableWrapEl.querySelector('table');
+      if (!table) return;
+      const headers = table.querySelectorAll('thead th');
+      const tbody = table.querySelector('tbody');
+      if (!headers.length || !tbody) return;
+
+      headers.forEach((th, colIdx) => {
+        th.classList.add('sortable');
+        th.addEventListener('click', () => {
+          // Determine sort direction
+          const isAsc = th.classList.contains('sort-asc');
+          // Reset all headers
+          headers.forEach(h => { h.classList.remove('sort-asc', 'sort-desc'); });
+          // Set new direction
+          const dir = isAsc ? 'desc' : 'asc';
+          th.classList.add('sort-' + dir);
+
+          // Get rows and sort
+          const rows = Array.from(tbody.querySelectorAll('tr'));
+          rows.sort((a, b) => {
+            const cellA = a.children[colIdx];
+            const cellB = b.children[colIdx];
+            if (!cellA || !cellB) return 0;
+            // Extract text content for comparison
+            let valA = cellA.textContent.trim();
+            let valB = cellB.textContent.trim();
+
+            // Try numeric comparison (also handles formatted numbers like "1'234")
+            const numA = parseFloat(valA.replace(/['''.\s]/g, '').replace(',', '.'));
+            const numB = parseFloat(valB.replace(/['''.\s]/g, '').replace(',', '.'));
+            if (!isNaN(numA) && !isNaN(numB)) {
+              return dir === 'asc' ? numA - numB : numB - numA;
+            }
+
+            // Time comparison (HH:MM:SS)
+            if (/^\d{1,2}:\d{2}/.test(valA) && /^\d{1,2}:\d{2}/.test(valB)) {
+              return dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            }
+
+            // String comparison
+            return dir === 'asc'
+              ? valA.localeCompare(valB, 'de-CH', { sensitivity: 'base' })
+              : valB.localeCompare(valA, 'de-CH', { sensitivity: 'base' });
+          });
+
+          // Re-append sorted rows
+          rows.forEach(r => tbody.appendChild(r));
+        });
+      });
+    }
+
     // --- Tab Switching ---
     function switchToTab(tabName) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -1600,6 +1690,7 @@ fetch('/api/query', {
               </tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
@@ -1650,6 +1741,7 @@ fetch('/api/query', {
               </tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
@@ -1725,6 +1817,7 @@ fetch('/api/query', {
               </tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
@@ -1783,6 +1876,7 @@ fetch('/api/query', {
               </tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
@@ -1816,6 +1910,7 @@ fetch('/api/query', {
               </tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
@@ -1843,6 +1938,7 @@ fetch('/api/query', {
               <tr>${cols.map(c => `<td>${row[c] ?? ''}</td>`).join('')}</tr>`).join('')}
             </tbody>
           </table></div>`;
+        makeSortable(el.querySelector('.table-wrap'));
       } catch (err) {
         el.innerHTML = `<div class="error">${err.message}</div>`;
       }
