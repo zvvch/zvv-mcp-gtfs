@@ -141,11 +141,11 @@ function createMcpServer() {
   // 3. get_departures - Abfahrten ab Haltestelle
   server.tool(
     'get_departures',
-    'Gibt Abfahrten von einer Haltestelle zurück. Zeigt Linie, Richtung und Abfahrtszeit. Löst Parent-Stations automatisch auf (inkl. aller Gleise/Perrons).',
+    'Gibt Abfahrten von einer Haltestelle zurück. Zeigt Linie, Richtung und Abfahrtszeit. Löst Parent-Stations automatisch auf (inkl. aller Gleise/Perrons). Ohne time_from werden Abfahrten ab JETZT angezeigt.',
     {
       stop_id: z.string().describe('Haltestellen-ID (stop_id)'),
       date: z.string().optional().describe('Datum im Format YYYYMMDD (default: heute)'),
-      time_from: z.string().optional().describe('Startzeit im Format HH:MM:SS (default: 00:00:00)'),
+      time_from: z.string().optional().describe('Startzeit im Format HH:MM:SS (default: aktuelle Uhrzeit). Für Abfahrten ab sofort weglassen.'),
       limit: z.number().int().min(1).max(200).default(30).describe('Maximale Anzahl Ergebnisse')
     },
     async ({ stop_id, date, time_from, limit }) => {
@@ -161,7 +161,11 @@ function createMcpServer() {
       );
       const dayCol = dayOfWeek[dateObj.getDay()];
 
-      const startTime = time_from || '00:00:00';
+      // Default: aktuelle Schweizer Zeit (CET/CEST), nicht Mitternacht
+      const nowSwiss = new Date().toLocaleTimeString('de-CH', {
+        timeZone: 'Europe/Zurich', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      const startTime = time_from || nowSwiss;
 
       // Schweizer GTFS Stop-ID Aufloesung:
       // Parent8503000 = Eltern-Station, 8503000 = Station, 8503000:0:1 = Gleis
