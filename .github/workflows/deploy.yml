@@ -1,0 +1,71 @@
+name: Deploy to LXC
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Manueller Trigger via GitHub UI
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false  # Laufendes Deploy nicht abbrechen
+
+jobs:
+  test:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+  deploy:
+    name: Deploy to Proxmox LXC
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PVE_HOST }}
+          username: ${{ secrets.PVE_USER }}
+          key: ${{ secrets.PVE_SSH_KEY }}
+          port: ${{ secrets.PVE_PORT || 22 }}
+          script_stop: true
+          timeout: 120s
+          script: |
+            set -e
+            VMID="${{ secrets.LXC_VMID || '105' }}"
+            echo "=== Deploying to LXC $VMID ==="
+
+            # Code aktualisieren
+            pct exec "$VMID" -- su - gtfs -c "cd /home/gtfs/app && git pull --ff-only"
+
+            # Dependencies installieren (nur wenn package-lock geaendert)
+            pct exec "$VMID" -- su - gtfs -c "cd /home/gtfs/app && npm install --production --no-fund --no-audit"
+
+            # Server neustarten
+            pct exec "$VMID" -- systemctl restart gtfs
+
+            # Health-Check (max 15 Versuche)
+            echo "Warte auf Server..."
+            for i in $(seq 1 15); do
+              if pct exec "$VMID" -- curl -sf http://localhost:3000/health >/dev/null 2>&1; then
+                echo "=== Deploy erfolgreich ==="
+                pct exec "$VMID" -- curl -sf http://localhost:3000/health | python3 -m json.tool 2>/dev/null || true
+                exit 0
+              fi
+              sleep 2
+            done
+
+            echo "FEHLER: Server antwortet nicht nach Deploy!"
+            pct exec "$VMID" -- journalctl -u gtfs --no-pager -n 30
+            exit 1
