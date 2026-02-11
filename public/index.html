@@ -752,6 +752,69 @@ fetch('/api/query', {
       });
     });
 
+    // --- Deeplinks via URL-Parameter ---
+    // Beispiele:
+    //   ?tab=departures&stop=8503000
+    //   ?tab=stops&q=Zürich HB
+    //   ?tab=routes&type=tram&agency=11
+    //   ?tab=trip&id=1.TA.91-1-A-j26-1.1.H
+    //   ?tab=sql&q=SELECT * FROM agency LIMIT 5
+    function handleDeeplink() {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      if (tab) {
+        const tabBtn = document.querySelector(`[data-tab="${tab}"]`);
+        if (tabBtn) {
+          document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+          tabBtn.classList.add('active');
+          document.getElementById('panel-' + tab).classList.add('active');
+        }
+      }
+
+      // Tab-spezifische Parameter ausfuellen und ausfuehren
+      const q = params.get('q');
+      const stop = params.get('stop');
+      const id = params.get('id');
+      const type = params.get('type');
+      const agency = params.get('agency');
+      const date = params.get('date');
+      const time = params.get('time');
+
+      switch (tab) {
+        case 'stops':
+          if (q) { document.getElementById('stop-query').value = q; searchStops(); }
+          break;
+        case 'departures':
+          if (stop) document.getElementById('dep-stop-id').value = stop;
+          if (date) document.getElementById('dep-date').value = date;
+          if (time) document.getElementById('dep-time').value = time;
+          if (stop) getDepartures();
+          break;
+        case 'trip':
+          if (id) { document.getElementById('trip-id').value = id; getTripDetails(); }
+          break;
+        case 'routes':
+          if (type) document.getElementById('route-type').value = type;
+          if (agency) document.getElementById('route-agency').value = agency;
+          if (type || agency) searchRoutes();
+          break;
+        case 'sql':
+          if (q) { document.getElementById('sql-input').value = q; runSQL(); }
+          break;
+        case 'agencies':
+          getAgencies();
+          break;
+        case 'status':
+          loadStatus();
+          break;
+        case 'docs':
+          loadDocs();
+          break;
+      }
+    }
+    handleDeeplink();
+
     // --- Enter Key ---
     document.getElementById('stop-query').addEventListener('keydown', e => { if (e.key === 'Enter') searchStops(); });
     document.getElementById('dep-stop-id').addEventListener('keydown', e => { if (e.key === 'Enter') getDepartures(); });
