@@ -163,8 +163,23 @@ function createMcpServer() {
 
       const startTime = time_from || '00:00:00';
 
-      // Parent-Station aufloesen: Wenn stop_id ein Parent ist (location_type=1),
-      // auch alle Kind-Stops (Gleise/Perrons) einbeziehen
+      // Schweizer GTFS Stop-ID Aufloesung:
+      // Parent8503000 = Eltern-Station, 8503000 = Station, 8503000:0:1 = Gleis
+      // Wir muessen alle verwandten Stops finden, egal welche ID uebergeben wird.
+      const relatedStops = d.prepare(`
+        SELECT DISTINCT stop_id FROM stops
+        WHERE stop_id = ?
+           OR parent_station = ?
+           OR parent_station = ('Parent' || ?)
+           OR stop_id LIKE (? || ':%')
+           OR parent_station = (SELECT parent_station FROM stops WHERE stop_id = ? AND parent_station IS NOT NULL AND parent_station != '')
+      `).all(stop_id, stop_id, stop_id, stop_id, stop_id).map(r => r.stop_id);
+
+      // Original stop_id immer einschliessen
+      if (!relatedStops.includes(stop_id)) relatedStops.push(stop_id);
+
+      const stopPlaceholders = relatedStops.map(() => '?').join(',');
+
       const results = d.prepare(`
         SELECT
           st.departure_time,
@@ -181,10 +196,7 @@ function createMcpServer() {
         JOIN trips t ON st.trip_id = t.trip_id
         JOIN routes r ON t.route_id = r.route_id
         LEFT JOIN agency a ON r.agency_id = a.agency_id
-        WHERE (
-            st.stop_id = ?
-            OR st.stop_id IN (SELECT stop_id FROM stops WHERE parent_station = ?)
-          )
+        WHERE st.stop_id IN (${stopPlaceholders})
           AND st.departure_time >= ?
           AND (
             -- Fall 1: Service aktiv via calendar (Basis-Fahrplan)
@@ -209,7 +221,7 @@ function createMcpServer() {
           )
         ORDER BY st.departure_time
         LIMIT ?
-      `).all(stop_id, stop_id, startTime, targetDate, targetDate, targetDate, targetDate, limit);
+      `).all(...relatedStops, startTime, targetDate, targetDate, targetDate, targetDate, limit);
 
       return {
         content: [{
