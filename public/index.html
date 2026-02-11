@@ -230,6 +230,55 @@
     }
     button.btn:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
 
+    /* Random / Dice Button */
+    button.btn-random {
+      background: transparent;
+      color: #a78bfa;
+      border: 1px solid #a78bfa40;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: var(--font);
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    button.btn-random:hover {
+      background: #a78bfa18;
+      border-color: #a78bfa70;
+      box-shadow: 0 0 16px #a78bfa20;
+    }
+
+    button.btn-random:active {
+      transform: scale(0.95);
+    }
+
+    button.btn-random svg {
+      width: 16px;
+      height: 16px;
+      fill: currentColor;
+      transition: transform 0.4s cubic-bezier(.4,2,.6,1);
+    }
+
+    button.btn-random:hover svg {
+      transform: rotate(90deg);
+    }
+
+    button.btn-random.rolling svg {
+      animation: dice-roll 0.5s ease;
+    }
+
+    @keyframes dice-roll {
+      0% { transform: rotate(0deg) scale(1); }
+      40% { transform: rotate(180deg) scale(1.2); }
+      100% { transform: rotate(360deg) scale(1); }
+    }
+
     /* Table */
     .table-wrap {
       overflow-x: auto;
@@ -835,6 +884,7 @@
           <input type="text" id="stop-query" placeholder="z.B. Zürich HB, Paradeplatz, Bern..." autofocus>
           <input type="number" id="stop-limit" value="20" min="1" max="100" style="max-width:90px" title="Limit">
           <button class="btn" onclick="searchStops()">Suchen</button>
+          <button class="btn-random" onclick="randomStops()" title="Zufällige Haltestelle"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
         </div>
         <div id="stops-result"></div>
       </div>
@@ -856,6 +906,7 @@
           </select>
           <input type="text" id="route-agency" placeholder="Agency ID (optional)">
           <button class="btn" onclick="searchRoutes()">Suchen</button>
+          <button class="btn-random" onclick="randomRoutes()" title="Zufällige Linien"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
         </div>
         <div id="routes-result"></div>
       </div>
@@ -870,6 +921,7 @@
           <input type="date" id="dep-date">
           <input type="time" id="dep-time" value="08:00">
           <button class="btn" onclick="getDepartures()">Abfragen</button>
+          <button class="btn-random" onclick="randomDepartures()" title="Zufällige Abfahrten"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
         </div>
         <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px">
           Tipp: Suche zuerst eine Haltestelle und klicke auf die Stop-ID.
@@ -885,6 +937,7 @@
         <div class="form-row">
           <input type="text" id="trip-id" placeholder="Trip ID">
           <button class="btn" onclick="getTripDetails()">Abfragen</button>
+          <button class="btn-random" onclick="randomTrip()" title="Zufällige Fahrt"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
         </div>
         <div id="trip-result"></div>
       </div>
@@ -906,6 +959,7 @@
         <textarea id="sql-query" placeholder="SELECT * FROM stops WHERE stop_name LIKE '%Zürich%' LIMIT 20">SELECT stop_name, stop_lat, stop_lon FROM stops WHERE stop_name LIKE '%Zürich HB%' LIMIT 10</textarea>
         <div class="form-row" style="margin-top:10px">
           <button class="btn" onclick="runSQL()">Ausführen</button>
+          <button class="btn-random" onclick="randomSQL()" title="Zufällige SQL-Abfrage"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
         </div>
         <p style="font-size:12px; color:var(--text-dim); margin-top:8px">
           Tabellen: agency, stops, routes, trips, stop_times, calendar, calendar_dates, feed_info, transfers
@@ -1272,7 +1326,7 @@ fetch('/api/query', {
   <script>
     // --- Mermaid Init ---
     mermaid.initialize({
-      startOnLoad: true,
+      startOnLoad: false,
       theme: 'dark',
       themeVariables: {
         darkMode: true,
@@ -2007,7 +2061,13 @@ fetch('/api/query', {
 
     // --- Docs ---
     let docsLoaded = false;
+    let mermaidRendered = false;
     async function loadDocs() {
+      // Mermaid erst rendern, wenn das Panel sichtbar ist
+      if (!mermaidRendered) {
+        mermaidRendered = true;
+        try { await mermaid.run(); } catch {}
+      }
       if (docsLoaded) return;
       try {
         const data = await apiCall('/health');
@@ -2027,6 +2087,95 @@ fetch('/api/query', {
         el('doc-rows-transfers', formatNum(t.transfers));
         docsLoaded = true;
       } catch {}
+    }
+
+    // --- Random / Dice Helpers ---
+    function diceRoll(btn) {
+      if (!btn) btn = event?.currentTarget;
+      if (btn) { btn.classList.remove('rolling'); void btn.offsetWidth; btn.classList.add('rolling'); }
+    }
+
+    function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+    async function randomStops() {
+      diceRoll();
+      try {
+        const data = await apiPost('/api/query', {
+          sql: "SELECT stop_name FROM stops WHERE location_type = 1 ORDER BY RANDOM() LIMIT 1"
+        });
+        if (data.results?.length) {
+          document.getElementById('stop-query').value = data.results[0].stop_name;
+          searchStops();
+        }
+      } catch {
+        // Fallback: vordefinierte Liste
+        const names = ['Zürich HB','Bern','Basel SBB','Luzern','Winterthur','St. Gallen','Lausanne','Genève','Lugano','Biel/Bienne','Thun','Chur','Aarau','Olten','Zug','Schaffhausen','Interlaken','Davos','Montreux','Rapperswil'];
+        document.getElementById('stop-query').value = pick(names);
+        searchStops();
+      }
+    }
+
+    async function randomRoutes() {
+      diceRoll();
+      const types = ['rail','bus','tram','gondola','ferry','funicular',''];
+      document.getElementById('route-type').value = pick(types);
+      document.getElementById('route-agency').value = '';
+      searchRoutes();
+    }
+
+    async function randomDepartures() {
+      diceRoll();
+      try {
+        const data = await apiPost('/api/query', {
+          sql: `SELECT s.stop_id, s.stop_name FROM stops s
+                WHERE s.location_type = 1
+                AND s.stop_id IN (SELECT DISTINCT st.stop_id FROM stop_times st LIMIT 10000)
+                ORDER BY RANDOM() LIMIT 1`
+        });
+        if (data.results?.length) {
+          document.getElementById('dep-stop-id').value = data.results[0].stop_id;
+          document.getElementById('dep-date').value = new Date().toISOString().slice(0, 10);
+          document.getElementById('dep-time').value = '08:00';
+          getDepartures();
+        }
+      } catch {
+        const ids = ['8503000','8507000','8500010','8505000','8506000','8506302','8501120','8500218'];
+        document.getElementById('dep-stop-id').value = pick(ids);
+        document.getElementById('dep-date').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('dep-time').value = '08:00';
+        getDepartures();
+      }
+    }
+
+    async function randomTrip() {
+      diceRoll();
+      try {
+        const data = await apiPost('/api/query', {
+          sql: "SELECT trip_id FROM trips ORDER BY RANDOM() LIMIT 1"
+        });
+        if (data.results?.length) {
+          document.getElementById('trip-id').value = data.results[0].trip_id;
+          getTripDetails();
+        }
+      } catch {}
+    }
+
+    function randomSQL() {
+      diceRoll();
+      const queries = [
+        "-- Top 10 Haltestellen mit den meisten Abfahrten\nSELECT s.stop_name, COUNT(*) as abfahrten\nFROM stop_times st\nJOIN stops s ON st.stop_id = s.stop_id\nWHERE s.location_type = 1\nGROUP BY s.stop_name\nORDER BY abfahrten DESC\nLIMIT 10",
+        "-- Alle Tram-Linien in der Schweiz\nSELECT r.route_short_name, r.route_long_name, a.agency_name\nFROM routes r\nJOIN agency a ON r.agency_id = a.agency_id\nWHERE r.route_type BETWEEN 900 AND 999\nORDER BY a.agency_name, r.route_short_name\nLIMIT 30",
+        "-- Verkehrsunternehmen nach Anzahl Linien\nSELECT a.agency_name, COUNT(r.route_id) as linien,\n  MIN(r.route_type) as typ_min, MAX(r.route_type) as typ_max\nFROM agency a\nJOIN routes r ON a.agency_id = r.agency_id\nGROUP BY a.agency_name\nORDER BY linien DESC\nLIMIT 20",
+        "-- Früheste und späteste Abfahrt pro Linie\nSELECT r.route_short_name,\n  MIN(st.departure_time) as erste_abfahrt,\n  MAX(st.departure_time) as letzte_abfahrt\nFROM stop_times st\nJOIN trips t ON st.trip_id = t.trip_id\nJOIN routes r ON t.route_id = r.route_id\nWHERE r.route_short_name != ''\nGROUP BY r.route_short_name\nORDER BY r.route_short_name\nLIMIT 20",
+        "-- Schiffverbindungen in der Schweiz\nSELECT r.route_short_name, r.route_long_name, a.agency_name\nFROM routes r\nJOIN agency a ON r.agency_id = a.agency_id\nWHERE r.route_type BETWEEN 1000 AND 1199\nORDER BY a.agency_name\nLIMIT 30",
+        "-- Seilbahnen und Gondeln\nSELECT r.route_short_name, r.route_long_name, a.agency_name, r.route_type\nFROM routes r\nJOIN agency a ON r.agency_id = a.agency_id\nWHERE r.route_type BETWEEN 1300 AND 1599\nORDER BY r.route_type, a.agency_name\nLIMIT 30",
+        "-- Anzahl Fahrten pro Wochentag\nSELECT\n  SUM(monday) as Mo, SUM(tuesday) as Di, SUM(wednesday) as Mi,\n  SUM(thursday) as Do, SUM(friday) as Fr, SUM(saturday) as Sa, SUM(sunday) as So\nFROM calendar\nWHERE end_date >= strftime('%Y%m%d', 'now')",
+        "-- Haltestellen mit den meisten Umsteigeverbindungen\nSELECT s.stop_name, COUNT(*) as umsteige\nFROM transfers t\nJOIN stops s ON t.from_stop_id = s.stop_id\nGROUP BY s.stop_name\nORDER BY umsteige DESC\nLIMIT 15",
+        "-- Zufällige 10 Haltestellen mit Koordinaten\nSELECT stop_id, stop_name, stop_lat, stop_lon\nFROM stops\nWHERE location_type = 1 AND stop_lat IS NOT NULL\nORDER BY RANDOM()\nLIMIT 10",
+        "-- IC/EC-Fernverkehrslinien\nSELECT r.route_short_name, r.route_long_name, a.agency_name\nFROM routes r\nJOIN agency a ON r.agency_id = a.agency_id\nWHERE r.route_type IN (101, 102)\nORDER BY r.route_short_name\nLIMIT 30"
+      ];
+      document.getElementById('sql-query').value = pick(queries);
+      runSQL();
     }
 
     // --- Init ---
