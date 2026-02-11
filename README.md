@@ -1,174 +1,126 @@
-# ZVV-GTS-MCP Server
+# ZVV GTFS MCP Server
+
+MCP Server für Schweizer ÖV-Fahrplandaten (GTFS) -- abfragbar via AI/LLM-Systeme wie Claude, ChatGPT oder eigene Agents.
 
 ## Übersicht
 
-**ZVV-GTS-MCP** ist ein serverseitiges Projekt zur Aufbereitung und Bereitstellung von ÖV-Daten des **Zürcher Verkehrsverbunds (ZVV)** auf Basis der GTFS-Daten von [opentransportdata.swiss](https://data.opentransportdata.swiss/dataset/timetable-2025-gtfs2020).
-
-Das Ziel ist es, diese Daten strukturiert über die **Spice.ai MCP Engine** zugänglich zu machen – als Schnittstelle für nachgelagerte AI-Projekte, Datenanalysen oder LLM-Abfragen.
-
-> ✳️ **Hinweis:** Dieses Projekt stellt kein Chat-Interface oder Frontend bereit. Es fokussiert sich ausschliesslich auf die Datenverfügbarkeit über MCP.
+Dieses Projekt stellt die offiziellen **GTFS-Fahrplandaten** der Schweiz (via [opentransportdata.swiss](https://data.opentransportdata.swiss)) über das **Model Context Protocol (MCP)** bereit. AI-Systeme können darüber strukturiert Haltestellen suchen, Abfahrten abfragen und Fahrpläne analysieren.
 
 ## Architektur
 
-### Systemkomponenten
 ```mermaid
-sequenceDiagram
-    participant UserSystem as 🔍 AI/LLM-Consumer
-    participant MCP as 🧠 Spice.ai MCP v1.1.0
-    participant GTFS as 📦 GTFS-Daten (opentransportdata.swiss)
-
-    Note over GTFS, MCP: Setup-Phase
-    GTFS->>MCP: GTFS-Dateien (z.B. routes.txt)
-    MCP-->>MCP: DataFusion SQL Engine
-    MCP-->>MCP: SSE API (/v1/mcp/sse)
-
-    Note over UserSystem, MCP: Laufzeit-Abfrage
-    UserSystem->>MCP: SQL Query
-    MCP-->>UserSystem: Arrow/JSON Response
-
-    Note over UserSystem: Nutzbar für LLMs, Dashboards, Agents etc.
+flowchart TD
+    GTFS["opentransportdata.swiss<br/>GTFS ZIP"] -->|download-gtfs.js| CSV["CSV-Dateien<br/>9 GTFS-Tabellen"]
+    CSV -->|import-gtfs.js| DB["SQLite DB<br/>zvv-gtfs.db"]
+    DB --> MCP["MCP Server<br/>@modelcontextprotocol/sdk"]
+    MCP -->|StreamableHTTP| Client["AI/LLM Client<br/>Claude, ChatGPT, etc."]
 ```
-
-### Technologie-Stack
-- **Spice.ai v1.1.0**: MCP-Server mit SSE-API
-- **DataFusion**: Schnelle SQL-Abfragen
-- **Apache Arrow**: Effiziente Datenformate
-- **Node.js**: GTFS-Datenverarbeitung
-
-### Datenfluss
-1. **Datenquelle:** GTFS-Daten von opentransportdata.swiss
-2. **Verarbeitung:** SQL-Transformation via DataFusion
-3. **Bereitstellung:** SSE-API über Spice.ai MCP
-4. **Nutzung:** Direkter SQL-Zugriff für AI/LLM-Systeme
 
 ## Features
 
-- 🚈 Integration der offiziellen **GTFS-Daten 2025** des ZVV
-- ⚙️ **Spice.ai MCP** als Daten-Backend für strukturierte AI-Zugriffe
-- 🔌 Bereitstellung von MCP-kompatiblen Datasets (`routes`, `stops`, etc.)
-- ☁️ Deployment-fähig auf **Vercel** (z. B. als Headless Daten-Service)
+- 6 MCP-Tools für strukturierte GTFS-Abfragen
+- SQLite-Datenbank mit allen 9 GTFS-Tabellen + Indexen
+- Automatischer Download der neuesten Fahrplandaten
+- StreamableHTTP-Transport (MCP-Standard)
+- Vercel- und Docker-Deployment
 
-## Technische Details
+## Quick Start
 
-### Projektstruktur
+### Voraussetzungen
+
+- Node.js >= 18
+
+### Installation & Start
+
+```bash
+# Dependencies installieren
+npm install
+
+# GTFS-Daten herunterladen und in SQLite importieren
+npm run build
+
+# Server starten
+npm start
+```
+
+Der Server ist dann erreichbar:
+- **MCP Endpoint:** `POST http://localhost:3000/mcp`
+- **Health Check:** `GET http://localhost:3000/health`
+
+## MCP-Tools
+
+| Tool | Beschreibung | Parameter |
+|------|-------------|-----------|
+| `search_stops` | Haltestellen suchen | `query`, `limit?` |
+| `get_routes` | Linien abrufen | `agency_id?`, `route_type?`, `limit?` |
+| `get_departures` | Abfahrten ab Haltestelle | `stop_id`, `date?`, `time_from?`, `limit?` |
+| `get_trip_details` | Fahrt-Details mit allen Halten | `trip_id` |
+| `get_agencies` | Alle Verkehrsunternehmen | -- |
+| `query_gtfs` | Freie SQL-Abfrage (read-only) | `sql`, `limit?` |
+
+### GTFS route_type Referenz
+
+| Typ | Verkehrsmittel |
+|-----|---------------|
+| 0 | Tram / Strassenbahn |
+| 1 | U-Bahn / Metro |
+| 2 | Bahn (S-Bahn, IC, IR) |
+| 3 | Bus |
+| 4 | Fähre |
+| 6 | Gondelbahn |
+| 7 | Standseilbahn |
+
+## MCP-Ressourcen
+
+- `gtfs://status` -- Aktueller Daten-Status (Download-Datum, Version)
+- `gtfs://schema` -- Datenbankschema aller Tabellen
+
+## Projektstruktur
+
 ```
 mcp-gtfs/
-├── download-gtfs.js     # Skript zum automatischen Download der GTFS-Daten
-├── package.json         # Node.js-Projektkonfiguration
-├── zvv-data/           # Verzeichnis für GTFS-Daten
-│   └── gtfs/           # GTFS-Rohdaten (wird automatisch gefüllt)
-│       └── gtfs-status.json  # Metadaten zum letzten Download
-└── README.md           # Diese Dokumentation
+├── server.js           # MCP Server (Express + @modelcontextprotocol/sdk)
+├── download-gtfs.js    # GTFS-Daten von opentransportdata.swiss herunterladen
+├── import-gtfs.js      # GTFS CSV → SQLite Konverter
+├── api/
+│   └── mcp.js          # Vercel Serverless Function Entry Point
+├── test/
+│   ├── smoke.test.js   # Smoke Tests (30 Tests)
+│   └── fixtures/       # Test-Daten (Mini-GTFS)
+├── zvv-data/
+│   └── gtfs/           # GTFS-Rohdaten (nicht versioniert)
+├── package.json
+├── vercel.json         # Vercel-Konfiguration
+├── Dockerfile          # Docker-Image
+└── docker-compose.yml  # Docker Compose
 ```
 
-### Datenbeschaffung
+## Scripts
 
-#### Automatischer Download-Prozess
-```mermaid
-sequenceDiagram
-    participant S as Skript
-    participant O as opentransportdata.swiss
-    participant F as Dateisystem
-    participant Z as ZIP-Verarbeitung
-
-    S->>O: 1. Lade Übersichtsseite
-    O-->>S: HTML mit Download-Links
-    S->>S: 2. Extrahiere neuesten ZIP-Link
-    S->>O: 3. Starte Download
-    O-->>S: ZIP-Datei (mit Redirects)
-    S->>F: 4. Speichere temporär
-    S->>F: 5. Prüfe ZIP-Header
-    S->>Z: 6. Entpacke ZIP
-    Z->>F: 7. Schreibe GTFS-Dateien
-    S->>F: 8. Erstelle Status-Datei
-    S->>F: 9. Lösche temporäre ZIP
-```
-
-#### GTFS-Datenstruktur
-Die GTFS-Rohdaten werden im Verzeichnis `zvv-data/gtfs/` abgelegt und nicht versioniert. Stattdessen werden sie automatisch von [opentransportdata.swiss](https://data.opentransportdata.swiss/dataset/timetable-2025-gtfs2020) bezogen.
-
-**Kern-Datensätze:**
-- `agency.txt` – Verkehrsunternehmen
-- `stops.txt` – Haltestellen
-- `routes.txt` – Linien
-- `trips.txt` – Fahrten
-- `stop_times.txt` – Haltestellenzeiten
-- `calendar.txt` – Betriebstage
-- `calendar_dates.txt` – Ausnahmen
-- `feed_info.txt` – Metadaten
-- `transfers.txt` – Umsteigebeziehungen
-
-> **Hinweis:** `shapes.txt` (Linienführungen) ist in der Schweizer GTFS-Implementierung nicht enthalten.
+| Script | Beschreibung |
+|--------|-------------|
+| `npm run download` | GTFS-Daten herunterladen |
+| `npm run import` | GTFS CSV → SQLite importieren |
+| `npm run build` | Download + Import (komplett) |
+| `npm start` | MCP Server starten |
+| `npm test` | Smoke Tests ausführen (30 Tests) |
 
 ## Deployment
 
-### Docker-Konfiguration
+### Vercel
 
-Das Projekt verwendet Docker für eine konsistente Entwicklungsumgebung. Die Konfiguration besteht aus zwei Hauptdateien:
+```bash
+# Vercel CLI installieren
+npm i -g vercel
 
-#### Dockerfile
-```dockerfile
-# Basis-Image mit Node.js
-FROM node:20-slim
-
-# Spice.ai Installation
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Spice.ai CLI installieren
-RUN curl -L https://github.com/spiceai/spiceai/releases/latest/download/spice_linux_amd64.tar.gz | tar xz \
-    && mv spice /usr/local/bin/ \
-    && chmod +x /usr/local/bin/spice
-
-# Arbeitsverzeichnis
-WORKDIR /app
-
-# Dependencies installieren
-COPY package*.json ./
-RUN npm install
-
-# Quellcode kopieren
-COPY . .
-
-# Port freigeben
-EXPOSE 3000
-
-# Startbefehl
-CMD ["npm", "start"]
+# Deployen
+vercel
 ```
 
-#### docker-compose.yml
-```yaml
-version: '3.8'
+Die `vercel.json` ist bereits konfiguriert. Im Build-Step werden die GTFS-Daten automatisch heruntergeladen und in SQLite importiert.
 
-services:
-  mcp-gtfs:
-    build: .
-    ports:
-      - "3000:3000"
-    volumes:
-      - .:/app
-      - /app/node_modules
-    environment:
-      - NODE_ENV=development
-    command: npm start
-```
+### Docker
 
-### Lokale Entwicklung
-
-#### Voraussetzungen
-- Docker Desktop (Windows/Mac) oder Docker Engine (Linux)
-- Docker Compose
-- Mindestens 2GB freier RAM
-- Mindestens 1GB freier Festplattenspeicher
-
-#### Erste Schritte
-1. **Docker installieren:**
-   - Windows/Mac: [Docker Desktop](https://www.docker.com/products/docker-desktop)
-   - Linux: [Docker Engine](https://docs.docker.com/engine/install/)
-
-2. **Projekt starten:**
 ```bash
 # Container bauen und starten
 docker-compose up --build
@@ -177,88 +129,36 @@ docker-compose up --build
 docker-compose up -d
 ```
 
-3. **Status prüfen:**
-```bash
-# Container-Status anzeigen
-docker-compose ps
+## GTFS-Datenquelle
 
-# Logs anzeigen
-docker-compose logs -f
+Die Fahrplandaten stammen von [opentransportdata.swiss](https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020) und enthalten den gesamten Schweizer ÖV-Fahrplan.
+
+**Enthaltene Tabellen:**
+- `agency` -- Verkehrsunternehmen (SBB, ZVV, PostAuto, etc.)
+- `stops` -- Haltestellen mit Koordinaten
+- `routes` -- Linien (Tram, Bus, S-Bahn, etc.)
+- `trips` -- Einzelne Fahrten
+- `stop_times` -- Haltestellenzeiten pro Fahrt
+- `calendar` -- Betriebstage
+- `calendar_dates` -- Ausnahmen (Feiertage etc.)
+- `feed_info` -- Metadaten zum Fahrplan
+- `transfers` -- Umsteigebeziehungen
+
+## Tests
+
+```bash
+npm test
 ```
 
-4. **Container stoppen:**
-```bash
-# Container beenden
-docker-compose down
-
-# Container und Volumes entfernen
-docker-compose down -v
-```
-
-#### Wichtige Docker-Befehle
-```bash
-# Container neu bauen
-docker-compose build
-
-# Container neu starten
-docker-compose restart
-
-# Logs anzeigen
-docker-compose logs -f
-
-# Shell im Container öffnen
-docker-compose exec mcp-gtfs sh
-```
-
-#### Entwicklungshinweise
-- Der Code wird über ein Volume gemountet, Änderungen sind sofort sichtbar
-- `node_modules` ist in einem separaten Volume, um Konflikte zu vermeiden
-- Die GTFS-Daten werden automatisch heruntergeladen beim ersten Start
-- Der Server ist über `http://localhost:3000/v1/mcp/sse` erreichbar
-
-### Vercel Deployment
-Das Projekt ist für Vercel optimiert:
-- Verwendet das gleiche Docker-Image wie lokal
-- Automatische GTFS-Datenaktualisierung
-- Serverless-Funktionen für die API
-
-### Datenverwaltung
-
-#### Automatische GTFS-Datenaktualisierung
-Das System prüft bei jedem Start, ob alle erforderlichen GTFS-Dateien vorhanden sind:
-
-**Erforderliche Dateien:**
-- `agency.txt` – Verkehrsunternehmen
-- `stops.txt` – Haltestellen
-- `routes.txt` – Linien
-- `trips.txt` – Fahrten
-- `stop_times.txt` – Haltestellenzeiten
-- `calendar.txt` – Betriebstage
-- `calendar_dates.txt` – Ausnahmen
-- `feed_info.txt` – Metadaten
-- `transfers.txt` – Umsteigebeziehungen
-
-**Intelligenter Download:**
-- ✅ Prüft zuerst, ob alle Dateien vorhanden sind
-- ✅ Lädt nur bei fehlenden Dateien neu
-- ✅ Spart Bandbreite und Zeit
-- ✅ Verhindert unnötige Downloads
-
-#### Server starten
-```bash
-npm start
-```
-
-Der Server ist dann über `http://localhost:3000/v1/mcp/sse` erreichbar.
-
-### Status-Tracking
-Nach jedem erfolgreichen Download wird eine `gtfs-status.json` erzeugt mit:
-- Dateiname
-- Download-URL
-- Zeitstempel
-- Quelle
+30 Smoke Tests prüfen:
+- CSV-Parser (Anführungszeichen, Escaping, leere Felder)
+- SQLite-Import (alle 9 Tabellen, Zeilenanzahl, Metadaten)
+- HTTP-Endpoints (Health, MCP, Server-Info)
+- MCP-Tools (Suche, Filter, Joins)
+- Security (SQL-Injection-Schutz)
+- Download-Script (Modul-Exports, Konfiguration)
 
 ## Lizenz & Quellen
 
-- GTFS-Daten: [opentransportdata.swiss – Fahrplan 2025 (GTFS2020)](https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020)
-- Spice.ai MCP: [Dokumentation](https://docs.spiceai.org/)
+- GTFS-Daten: [opentransportdata.swiss -- Fahrplan 2025 (GTFS2020)](https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020)
+- MCP SDK: [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk)

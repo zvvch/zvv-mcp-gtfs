@@ -1,0 +1,2 @@
+feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date,feed_version,feed_id
+"SKI Geschäftsstelle","https://opentransportdata.swiss","de","20250101","20261231","20251211","ch"

@@ -1,15 +1,17 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/node"
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "outputDirectory": "public",
+  "functions": {
+    "api/mcp.js": {
+      "maxDuration": 30,
+      "memory": 1024
     }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/"
-    }
+  },
+  "rewrites": [
+    { "source": "/mcp", "destination": "/api/mcp" },
+    { "source": "/health", "destination": "/api/mcp" },
+    { "source": "/api/query", "destination": "/api/mcp" }
   ]
-} 
+}

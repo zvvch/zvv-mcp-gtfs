@@ -1,0 +1,9 @@
+stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,location_type,parent_station,stop_timezone,wheelchair_boarding,platform_code
+8503000,,"Zürich HB",,47.378177,8.540192,,,,,,0,
+8503000:0:1,,"Zürich HB","Gleis 1",47.378177,8.540192,,,0,8503000,,0,1
+8591052,,"Zürich, Paradeplatz",,47.369858,8.538667,,,1,,,0,
+8591052:0:1,,"Zürich, Paradeplatz",,47.369858,8.538667,,,0,8591052,,0,
+8591123,,"Zürich, Bellevue",,47.366636,8.545302,,,1,,,0,
+8591123:0:1,,"Zürich, Bellevue",,47.366636,8.545302,,,0,8591123,,0,
+8591256,,"Zürich, Central",,47.376924,8.544237,,,1,,,0,
+8591382,,"Bern",,46.948825,7.439122,,,1,,,0,

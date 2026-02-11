@@ -1,0 +1,4 @@
+agency_id,agency_name,agency_url,agency_timezone,agency_lang,agency_phone
+11,"Schweizerische Bundesbahnen SBB","http://www.sbb.ch","Europe/Zurich","de",""
+37,"Zürcher Verkehrsverbund","http://www.zvv.ch","Europe/Zurich","de","0848 988 988"
+65,"PostAuto Schweiz AG","http://www.postauto.ch","Europe/Zurich","de",""

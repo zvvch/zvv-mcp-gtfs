@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ZVV GTFS Explorer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface-2: #232730;
+      --border: #2e3340;
+      --text: #e4e6eb;
+      --text-dim: #8b8f9a;
+      --accent: #4f8ff7;
+      --accent-hover: #6ba0ff;
+      --green: #34d399;
+      --orange: #f59e0b;
+      --red: #ef4444;
+      --radius: 10px;
+      --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+    }
+
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* Layout */
+    .app {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 20px 60px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 32px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    header .logo {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    header .logo span { color: var(--accent); }
+
+    header .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--green) 15%, transparent);
+      color: var(--green);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    header .stats {
+      margin-left: auto;
+      font-size: 13px;
+      color: var(--text-dim);
+      text-align: right;
+    }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 24px;
+      background: var(--surface);
+      padding: 4px;
+      border-radius: var(--radius);
+      overflow-x: auto;
+    }
+
+    .tab {
+      padding: 10px 18px;
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+      font-family: var(--font);
+    }
+
+    .tab:hover { color: var(--text); background: var(--surface-2); }
+    .tab.active { background: var(--accent); color: #fff; }
+
+    /* Panels */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+
+    .card h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Form */
+    .form-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    input, select {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--text);
+      font-size: 14px;
+      font-family: var(--font);
+      outline: none;
+      transition: border-color 0.15s;
+      flex: 1;
+      min-width: 0;
+    }
+
+    input:focus, select:focus { border-color: var(--accent); }
+    input::placeholder { color: var(--text-dim); }
+
+    button.btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      font-family: var(--font);
+      white-space: nowrap;
+    }
+
+    button.btn:hover { background: var(--accent-hover); }
+    button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Table */
+    .table-wrap {
+      overflow-x: auto;
+      margin-top: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      background: var(--surface-2);
+      font-weight: 600;
+      text-align: left;
+      padding: 10px 12px;
+      color: var(--text-dim);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      position: sticky;
+      top: 0;
+    }
+
+    td {
+      padding: 9px 12px;
+      border-top: 1px solid var(--border);
+      color: var(--text);
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    tr:hover td { background: var(--surface-2); }
+
+    .table-wrap { max-height: 480px; overflow-y: auto; }
+
+    /* Badges */
+    .type-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 5px;
+      letter-spacing: 0.3px;
+    }
+    .type-tram { background: #dc262620; color: #ef4444; }
+    .type-metro { background: #8b5cf620; color: #a78bfa; }
+    .type-rail { background: #3b82f620; color: #60a5fa; }
+    .type-bus { background: #f59e0b20; color: #fbbf24; }
+    .type-ferry { background: #06b6d420; color: #22d3ee; }
+    .type-gondola { background: #10b98120; color: #34d399; }
+    .type-funicular { background: #ec489920; color: #f472b6; }
+    .type-other { background: #6b728020; color: #9ca3af; }
+
+    /* SQL */
+    textarea {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: var(--text);
+      font-size: 13px;
+      font-family: var(--mono);
+      line-height: 1.5;
+      resize: vertical;
+      min-height: 100px;
+      outline: none;
+    }
+
+    textarea:focus { border-color: var(--accent); }
+
+    /* Status */
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .stat-card {
+      background: var(--surface-2);
+      border-radius: 8px;
+      padding: 16px;
+      text-align: center;
+    }
+
+    .stat-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .stat-card .label {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Loading */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-dim);
+    }
+
+    .loading::after {
+      content: '';
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      margin-left: 10px;
+      vertical-align: middle;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+
+    .error {
+      background: #ef444415;
+      border: 1px solid #ef444440;
+      color: #fca5a5;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+
+    .count {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 8px;
+    }
+
+    /* Docs */
+    .docs { font-size: 14px; line-height: 1.7; }
+    .docs h4 { font-size: 16px; font-weight: 700; margin: 24px 0 8px; color: var(--text); }
+    .docs h4:first-child { margin-top: 0; }
+    .docs p { margin-bottom: 10px; color: var(--text-dim); }
+    .docs a { color: var(--accent); text-decoration: none; }
+    .docs a:hover { text-decoration: underline; }
+    .docs code {
+      background: var(--surface-2); padding: 2px 6px; border-radius: 4px;
+      font-family: var(--mono); font-size: 12px; color: var(--green);
+    }
+    .docs pre {
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 14px; overflow-x: auto; margin: 10px 0 16px;
+      font-family: var(--mono); font-size: 12px; line-height: 1.5; color: var(--text);
+    }
+    .docs ul, .docs ol { margin: 8px 0 16px 20px; color: var(--text-dim); }
+    .docs li { margin-bottom: 4px; }
+    .docs .info-box {
+      background: color-mix(in srgb, var(--accent) 8%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+      border-radius: 8px; padding: 14px 16px; margin: 12px 0;
+    }
+    .docs .info-box strong { color: var(--accent); }
+    .docs .section { border-top: 1px solid var(--border); padding-top: 20px; margin-top: 20px; }
+    .docs table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 13px; }
+    .docs th { background: var(--surface-2); padding: 8px 12px; text-align: left; color: var(--text-dim); font-size: 12px; text-transform: uppercase; }
+    .docs td { padding: 8px 12px; border-top: 1px solid var(--border); }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .app { padding: 16px 12px 40px; }
+      header { flex-wrap: wrap; }
+      header .stats { margin-left: 0; text-align: left; }
+      .form-row { flex-direction: column; }
+      input, select, button.btn { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="logo"><span>ZVV</span> GTFS Explorer</div>
+      <div class="badge" id="status-badge">Laden...</div>
+      <div class="stats" id="header-stats"></div>
+    </header>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="stops">Haltestellen</button>
+      <button class="tab" data-tab="routes">Linien</button>
+      <button class="tab" data-tab="departures">Abfahrten</button>
+      <button class="tab" data-tab="trip">Fahrt-Details</button>
+      <button class="tab" data-tab="agencies">Unternehmen</button>
+      <button class="tab" data-tab="sql">SQL</button>
+      <button class="tab" data-tab="status">Status</button>
+      <button class="tab" data-tab="docs">Dokumentation</button>
+    </div>
+
+    <!-- Haltestellen -->
+    <div class="panel active" id="panel-stops">
+      <div class="card">
+        <h3>Haltestellen suchen</h3>
+        <div class="form-row">
+          <input type="text" id="stop-query" placeholder="z.B. Zürich HB, Paradeplatz, Bern..." autofocus>
+          <input type="number" id="stop-limit" value="20" min="1" max="100" style="max-width:90px" title="Limit">
+          <button class="btn" onclick="searchStops()">Suchen</button>
+        </div>
+        <div id="stops-result"></div>
+      </div>
+    </div>
+
+    <!-- Linien -->
+    <div class="panel" id="panel-routes">
+      <div class="card">
+        <h3>Linien suchen</h3>
+        <div class="form-row">
+          <select id="route-type">
+            <option value="">Alle Typen</option>
+            <option value="rail">Bahn (IC, IR, RE, S-Bahn)</option>
+            <option value="bus">Bus</option>
+            <option value="tram">Tram</option>
+            <option value="gondola">Seilbahn / Gondel</option>
+            <option value="ferry">Fähre / Schiff</option>
+            <option value="funicular">Standseilbahn</option>
+          </select>
+          <input type="text" id="route-agency" placeholder="Agency ID (optional)">
+          <button class="btn" onclick="searchRoutes()">Suchen</button>
+        </div>
+        <div id="routes-result"></div>
+      </div>
+    </div>
+
+    <!-- Abfahrten -->
+    <div class="panel" id="panel-departures">
+      <div class="card">
+        <h3>Abfahrten ab Haltestelle</h3>
+        <div class="form-row">
+          <input type="text" id="dep-stop-id" placeholder="Stop ID (z.B. 8503000)">
+          <input type="date" id="dep-date">
+          <input type="time" id="dep-time" value="08:00">
+          <button class="btn" onclick="getDepartures()">Abfragen</button>
+        </div>
+        <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px">
+          Tipp: Suche zuerst eine Haltestelle und klicke auf die Stop-ID.
+        </p>
+        <div id="departures-result"></div>
+      </div>
+    </div>
+
+    <!-- Fahrt-Details -->
+    <div class="panel" id="panel-trip">
+      <div class="card">
+        <h3>Fahrt-Details</h3>
+        <div class="form-row">
+          <input type="text" id="trip-id" placeholder="Trip ID">
+          <button class="btn" onclick="getTripDetails()">Abfragen</button>
+        </div>
+        <div id="trip-result"></div>
+      </div>
+    </div>
+
+    <!-- Unternehmen -->
+    <div class="panel" id="panel-agencies">
+      <div class="card">
+        <h3>Verkehrsunternehmen</h3>
+        <button class="btn" onclick="getAgencies()" style="margin-bottom:12px">Alle laden</button>
+        <div id="agencies-result"></div>
+      </div>
+    </div>
+
+    <!-- SQL -->
+    <div class="panel" id="panel-sql">
+      <div class="card">
+        <h3>Freie SQL-Abfrage</h3>
+        <textarea id="sql-query" placeholder="SELECT * FROM stops WHERE stop_name LIKE '%Zürich%' LIMIT 20">SELECT stop_name, stop_lat, stop_lon FROM stops WHERE stop_name LIKE '%Zürich HB%' LIMIT 10</textarea>
+        <div class="form-row" style="margin-top:10px">
+          <button class="btn" onclick="runSQL()">Ausführen</button>
+        </div>
+        <p style="font-size:12px; color:var(--text-dim); margin-top:8px">
+          Tabellen: agency, stops, routes, trips, stop_times, calendar, calendar_dates, feed_info, transfers
+        </p>
+        <div id="sql-result"></div>
+      </div>
+    </div>
+
+    <!-- Dokumentation -->
+    <div class="panel" id="panel-docs">
+      <div class="card docs">
+        <h3>Technische Dokumentation</h3>
+
+        <h4>Was ist dieses Tool?</h4>
+        <p>
+          Der <strong>ZVV GTFS Explorer</strong> ist ein <strong>MCP-Server</strong> (Model Context Protocol), der den
+          gesamten Schweizer ÖV-Fahrplan als strukturierte, abfragbare Datenbank bereitstellt.
+          Er dient als <strong>Datenbrücke zwischen KI/LLM-Systemen und dem Schweizer öffentlichen Verkehr</strong>.
+        </p>
+        <div class="info-box">
+          <strong>Primärer Nutzen:</strong> AI-Assistenten (Claude, ChatGPT, Copilot etc.) können über das MCP-Protokoll
+          live auf Fahrplandaten zugreifen – Haltestellen suchen, Abfahrten abfragen, Verbindungen analysieren –
+          ohne dass die Daten ins Sprachmodell "eintrainiert" werden müssen.
+        </div>
+
+        <h4>Wofür kann man es nutzen?</h4>
+        <ul>
+          <li><strong>AI-gestützte Fahrplanauskunft</strong> – LLMs können Fragen wie "Wann fährt der nächste Zug ab Bern nach Zürich?" direkt beantworten</li>
+          <li><strong>Datenanalyse</strong> – Welche Haltestellen haben die meisten Verbindungen? Wie ist das Netz aufgebaut?</li>
+          <li><strong>App-Entwicklung</strong> – REST-API (<code>POST /api/query</code>) für eigene Anwendungen nutzen</li>
+          <li><strong>Open-Data-Exploration</strong> – Freie SQL-Abfragen auf den gesamten Schweizer ÖV-Datensatz</li>
+          <li><strong>Barrierefreiheit &amp; Planung</strong> – Haltestellenkoordinaten, Umsteigebeziehungen, Liniennetze analysieren</li>
+        </ul>
+
+        <div class="section">
+          <h4>Datenherkunft</h4>
+          <p>Alle Fahrplandaten stammen von der offiziellen Schweizer Open-Data-Plattform für Mobilität:</p>
+          <table>
+            <tr><th>Eigenschaft</th><th>Wert</th></tr>
+            <tr><td>Quelle</td><td><a href="https://data.opentransportdata.swiss/de/dataset/timetable-2026-gtfs2020" target="_blank">opentransportdata.swiss – Fahrplan 2026 (GTFS2020)</a></td></tr>
+            <tr><td>Herausgeber</td><td>Bundesamt für Verkehr (BAV) / SBB CFF FFS</td></tr>
+            <tr><td>Format</td><td>GTFS Static (General Transit Feed Specification) – <a href="https://gtfs.org/schedule/reference/" target="_blank">Spezifikation</a></td></tr>
+            <tr><td>Lizenz</td><td>Open Data – freie Nutzung gemäss <a href="https://opendata.swiss/de/terms-of-use" target="_blank">Nutzungsbedingungen opendata.swiss</a></td></tr>
+            <tr><td>Aktualisierung</td><td>Mehrmals wöchentlich (Di/Fr), ausser an Feiertagen</td></tr>
+            <tr><td>Abdeckung</td><td>Gesamte Schweiz: Bahn (SBB, BLS, SOB, RhB…), Bus (PostAuto, VBZ…), Tram, Schiff, Seilbahnen</td></tr>
+            <tr><td id="doc-gtfs-file">Aktuelle Datei</td><td id="doc-gtfs-file-value">–</td></tr>
+            <tr><td>Download-Datum</td><td id="doc-gtfs-downloaded">–</td></tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <h4>Datenaufbereitung (Pipeline)</h4>
+          <p>Die Rohdaten werden in drei Schritten automatisch aufbereitet:</p>
+          <ol>
+            <li>
+              <strong>Download</strong> (<code>download-gtfs.js</code>)<br>
+              Die Übersichtsseite auf opentransportdata.swiss wird gescraped (via <code>cheerio</code>),
+              der neueste ZIP-Link identifiziert (nach Datum im Dateinamen sortiert),
+              heruntergeladen (~320 MB) und entpackt.
+            </li>
+            <li>
+              <strong>Import</strong> (<code>import-gtfs.js</code>)<br>
+              Die GTFS-CSV-Dateien werden zeilenweise geparst und in eine SQLite-Datenbank importiert.
+              Dabei werden Tabellen, Spaltentypen und Indexe automatisch erstellt.
+              Speichereffizient: Zeile für Zeile, kein vollständiges Laden in den RAM.
+            </li>
+            <li>
+              <strong>Serving</strong> (<code>server.js</code>)<br>
+              Die SQLite-Datenbank wird über einen Express.js-Server bereitgestellt:
+              als MCP-Endpoint (<code>POST /mcp</code>) für KI-Tools, als REST-API (<code>POST /api/query</code>)
+              für das Frontend, und als Health-Check (<code>GET /health</code>) für Monitoring.
+            </li>
+          </ol>
+<pre>opentransportdata.swiss
+        │
+        ▼
+  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐
+  │  GTFS ZIP    │────▶│  CSV-Dateien  │────▶│  SQLite DB     │
+  │  (~320 MB)   │     │  (9 Dateien)  │     │  (~2.7 GB)     │
+  └─────────────┘     └──────────────┘     └───────┬────────┘
+    download-gtfs.js    import-gtfs.js              │
+                                                    ▼
+                                          ┌─────────────────┐
+                                          │  MCP Server      │
+                                          │  (Express.js)    │
+                                          │                  │
+                                          │  POST /mcp       │◀── KI/LLM
+                                          │  POST /api/query │◀── Frontend
+                                          │  GET  /health    │◀── Monitoring
+                                          └─────────────────┘</pre>
+        </div>
+
+        <div class="section">
+          <h4>GTFS-Datenmodell</h4>
+          <p>Die Datenbank enthält folgende 9 GTFS-Tabellen gemäss der <a href="https://gtfs.org/schedule/reference/" target="_blank">GTFS-Spezifikation</a>:</p>
+          <table>
+            <tr><th>Tabelle</th><th>Inhalt</th><th>Zeilen</th></tr>
+            <tr><td><code>agency</code></td><td>Verkehrsunternehmen (SBB, PostAuto, VBZ, BLS…)</td><td id="doc-rows-agency">–</td></tr>
+            <tr><td><code>stops</code></td><td>Haltestellen &amp; Gleise mit Geokoordinaten</td><td id="doc-rows-stops">–</td></tr>
+            <tr><td><code>routes</code></td><td>Linien (S1, IC 1, Bus 31, Tram 4…)</td><td id="doc-rows-routes">–</td></tr>
+            <tr><td><code>trips</code></td><td>Einzelfahrten einer Linie an einem bestimmten Tag</td><td id="doc-rows-trips">–</td></tr>
+            <tr><td><code>stop_times</code></td><td>Ankunfts-/Abfahrtszeit jeder Fahrt an jeder Haltestelle</td><td id="doc-rows-stop_times">–</td></tr>
+            <tr><td><code>calendar</code></td><td>Betriebstage (Mo–So) mit Gültigkeitszeitraum</td><td id="doc-rows-calendar">–</td></tr>
+            <tr><td><code>calendar_dates</code></td><td>Ausnahmen (Feiertage, Sonderfahrpläne)</td><td id="doc-rows-calendar_dates">–</td></tr>
+            <tr><td><code>feed_info</code></td><td>Metadaten zum Datensatz (Version, Gültigkeit)</td><td id="doc-rows-feed_info">–</td></tr>
+            <tr><td><code>transfers</code></td><td>Umsteigebeziehungen zwischen Haltestellen</td><td id="doc-rows-transfers">–</td></tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <h4>Erweiterte Routentypen (Schweiz)</h4>
+          <p>Die Schweizer GTFS-Daten verwenden <strong>erweiterte Routentypen</strong> statt der Standard-GTFS-Codes (0–7):</p>
+          <table>
+            <tr><th>Code-Bereich</th><th>Typ</th><th>Beispiele</th></tr>
+            <tr><td><code>100–199</code></td><td>Bahn</td><td>101=IC/EC, 102=IR, 103=RE, 106=S-Bahn, 109=Regionalzug</td></tr>
+            <tr><td><code>700–799</code></td><td>Bus</td><td>700=Bus, 705=Rufbus, 715=Nachtbus</td></tr>
+            <tr><td><code>900–999</code></td><td>Tram</td><td>900=Strassenbahn</td></tr>
+            <tr><td><code>1000–1199</code></td><td>Schiff</td><td>1000=Fähre, Kursschiff</td></tr>
+            <tr><td><code>1300–1399</code></td><td>Seilbahn</td><td>1300=Gondel, Luftseilbahn</td></tr>
+            <tr><td><code>1400–1499</code></td><td>Standseilbahn</td><td>1400=Funicular</td></tr>
+            <tr><td><code>1500–1599</code></td><td>Zahnradbahn</td><td>1500=Rack Railway</td></tr>
+            <tr><td><code>400–499</code></td><td>Metro</td><td>401=Metro (Lausanne M1/M2)</td></tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <h4>MCP-Integration (für KI-Tools)</h4>
+          <p>Der Server implementiert das <a href="https://modelcontextprotocol.io/" target="_blank">Model Context Protocol (MCP)</a>
+            über StreamableHTTP-Transport. KI-Clients können sich unter <code>POST /mcp</code> verbinden.</p>
+          <p><strong>Verfügbare MCP-Tools:</strong></p>
+          <table>
+            <tr><th>Tool</th><th>Beschreibung</th></tr>
+            <tr><td><code>search_stops</code></td><td>Textsuche nach Haltestellen (Name, Limit)</td></tr>
+            <tr><td><code>get_routes</code></td><td>Linien filtern nach Typ und/oder Agency</td></tr>
+            <tr><td><code>get_departures</code></td><td>Abfahrten ab einer Haltestelle (Stop-ID, Datum, Uhrzeit)</td></tr>
+            <tr><td><code>get_trip_details</code></td><td>Alle Halte einer bestimmten Fahrt</td></tr>
+            <tr><td><code>get_agencies</code></td><td>Alle Verkehrsunternehmen auflisten</td></tr>
+            <tr><td><code>query_gtfs</code></td><td>Freie SQL-SELECT-Abfrage (nur lesend, mit Sicherheitsfilter)</td></tr>
+          </table>
+          <p><strong>MCP-Ressourcen:</strong></p>
+          <table>
+            <tr><th>URI</th><th>Beschreibung</th></tr>
+            <tr><td><code>gtfs://status</code></td><td>Aktueller Datenstatus, Tabellenstatistiken</td></tr>
+            <tr><td><code>gtfs://schema</code></td><td>Datenbankschema aller Tabellen</td></tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <h4>REST-API (für Frontend &amp; Apps)</h4>
+          <table>
+            <tr><th>Endpoint</th><th>Methode</th><th>Beschreibung</th></tr>
+            <tr><td><code>/</code></td><td>GET</td><td>Frontend (dieses UI)</td></tr>
+            <tr><td><code>/health</code></td><td>GET</td><td>Serverstatus, DB-Statistiken</td></tr>
+            <tr><td><code>/api/query</code></td><td>POST</td><td>SQL-Abfrage: <code>{ "sql": "SELECT ..." }</code></td></tr>
+            <tr><td><code>/mcp</code></td><td>POST</td><td>MCP StreamableHTTP Endpoint</td></tr>
+          </table>
+<pre>// Beispiel: Haltestelle suchen
+fetch('/api/query', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    sql: "SELECT stop_id, stop_name FROM stops WHERE stop_name LIKE '%Paradeplatz%' LIMIT 5"
+  })
+});</pre>
+        </div>
+
+        <div class="section">
+          <h4>Technologie-Stack</h4>
+          <table>
+            <tr><th>Komponente</th><th>Technologie</th></tr>
+            <tr><td>Runtime</td><td>Node.js &ge; 18</td></tr>
+            <tr><td>HTTP Server</td><td>Express.js 4.x</td></tr>
+            <tr><td>MCP SDK</td><td>@modelcontextprotocol/sdk 1.x (StreamableHTTP)</td></tr>
+            <tr><td>Datenbank</td><td>SQLite via better-sqlite3 (synchron, nativ)</td></tr>
+            <tr><td>GTFS Parser</td><td>Eigener CSV-Parser (zeilenweise, memory-effizient)</td></tr>
+            <tr><td>Web Scraper</td><td>cheerio (HTML-Parsing der Download-Seite)</td></tr>
+            <tr><td>Tests</td><td>Node.js built-in Test Runner (<code>node:test</code>)</td></tr>
+            <tr><td>Deployment</td><td>Docker / Vercel Serverless / Lokal</td></tr>
+          </table>
+        </div>
+
+        <div class="section">
+          <h4>Quellcode &amp; Lizenz</h4>
+          <p>
+            <a href="https://github.com/zvvch/mcp-gtfs" target="_blank">github.com/zvvch/mcp-gtfs</a> – Open Source.
+            Die GTFS-Daten unterliegen den Nutzungsbedingungen von <a href="https://opendata.swiss" target="_blank">opendata.swiss</a>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div class="panel" id="panel-status">
+      <div class="card">
+        <h3>Server-Status</h3>
+        <div id="status-result"><div class="loading">Laden</div></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- API Helper ---
+    async function callTool(name, args = {}) {
+      const res = await fetch('/mcp', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream'
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: Date.now(),
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'gtfs-explorer', version: '1.0.0' }
+          }
+        })
+      });
+      // For the frontend, use the REST-like query endpoint instead
+      const r = await fetch(`/api/tool/${name}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(args)
+      });
+      return r.json();
+    }
+
+    // Use simpler REST API calls
+    async function apiCall(endpoint) {
+      const res = await fetch(endpoint);
+      return res.json();
+    }
+
+    async function apiPost(endpoint, body) {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      return res.json();
+    }
+
+    // --- Route Type Helper (Extended GTFS Types für Schweizer Daten) ---
+    function classifyRouteType(type) {
+      const t = Number(type);
+      // Bahn / Rail: 100-199
+      if (t === 2 || (t >= 100 && t <= 199)) return { label: 'Bahn', class: 'type-rail' };
+      // Bus: 3, 700-799
+      if (t === 3 || (t >= 700 && t <= 799)) return { label: 'Bus', class: 'type-bus' };
+      // Tram: 0, 900-999
+      if (t === 0 || (t >= 900 && t <= 999)) return { label: 'Tram', class: 'type-tram' };
+      // Seilbahn / Gondel: 6, 1300-1399
+      if (t === 6 || (t >= 1300 && t <= 1399)) return { label: 'Seilbahn', class: 'type-gondola' };
+      // Standseilbahn / Funicular: 7, 1400-1499
+      if (t === 7 || (t >= 1400 && t <= 1499)) return { label: 'Standseilbahn', class: 'type-funicular' };
+      // Zahnradbahn: 1500-1599
+      if (t >= 1500 && t <= 1599) return { label: 'Zahnradbahn', class: 'type-funicular' };
+      // Fähre / Schiff: 4, 1000-1199
+      if (t === 4 || (t >= 1000 && t <= 1199)) return { label: 'Schiff', class: 'type-ferry' };
+      // Metro: 1, 400-499
+      if (t === 1 || (t >= 400 && t <= 499)) return { label: 'Metro', class: 'type-metro' };
+      return { label: `Typ ${type}`, class: 'type-other' };
+    }
+
+    // SQL WHERE-Bedingungen für Typ-Gruppen
+    const ROUTE_TYPE_FILTERS = {
+      rail: 'r.route_type BETWEEN 100 AND 199',
+      bus: 'r.route_type BETWEEN 700 AND 799',
+      tram: 'r.route_type BETWEEN 900 AND 999',
+      gondola: 'r.route_type BETWEEN 1300 AND 1399',
+      ferry: 'r.route_type BETWEEN 1000 AND 1199',
+      funicular: '(r.route_type BETWEEN 1400 AND 1599)'
+    };
+
+    function routeTypeBadge(type) {
+      const t = classifyRouteType(type);
+      return `<span class="type-badge ${t.class}">${t.label}</span>`;
+    }
+
+    function formatNum(n) {
+      return n != null ? Number(n).toLocaleString('de-CH') : '-';
+    }
+
+    // --- Tab Switching ---
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+        if (tab.dataset.tab === 'status') loadStatus();
+        if (tab.dataset.tab === 'agencies') getAgencies();
+        if (tab.dataset.tab === 'docs') loadDocs();
+      });
+    });
+
+    // --- Enter Key ---
+    document.getElementById('stop-query').addEventListener('keydown', e => { if (e.key === 'Enter') searchStops(); });
+    document.getElementById('dep-stop-id').addEventListener('keydown', e => { if (e.key === 'Enter') getDepartures(); });
+    document.getElementById('trip-id').addEventListener('keydown', e => { if (e.key === 'Enter') getTripDetails(); });
+
+    // --- Haltestellen ---
+    async function searchStops() {
+      const query = document.getElementById('stop-query').value.trim();
+      if (!query) return;
+      const limit = parseInt(document.getElementById('stop-limit').value) || 20;
+      const el = document.getElementById('stops-result');
+      el.innerHTML = '<div class="loading">Suche</div>';
+
+      try {
+        const data = await apiPost('/api/query', {
+          sql: `SELECT stop_id, stop_name, stop_lat, stop_lon, location_type, parent_station
+                FROM stops WHERE stop_name LIKE '%${query.replace(/'/g, "''")}%'
+                ORDER BY CASE WHEN stop_name LIKE '${query.replace(/'/g, "''")}%' THEN 0 ELSE 1 END, stop_name
+                LIMIT ${limit}`
+        });
+
+        if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
+        if (!data.results || data.results.length === 0) { el.innerHTML = '<div class="empty">Keine Ergebnisse</div>'; return; }
+
+        el.innerHTML = `
+          <div class="count">${data.count} Ergebnis${data.count !== 1 ? 'se' : ''}</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Stop ID</th><th>Name</th><th>Lat</th><th>Lon</th><th>Typ</th></tr></thead>
+            <tbody>${data.results.map(s => `
+              <tr>
+                <td><a href="#" onclick="showDepartures('${s.stop_id}'); return false" style="color:var(--accent); text-decoration:none">${s.stop_id}</a></td>
+                <td>${s.stop_name || ''}</td>
+                <td>${s.stop_lat ? Number(s.stop_lat).toFixed(5) : ''}</td>
+                <td>${s.stop_lon ? Number(s.stop_lon).toFixed(5) : ''}</td>
+                <td>${s.location_type === 1 ? 'Station' : s.location_type === 0 ? 'Gleis/Kante' : s.location_type ?? ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    function showDepartures(stopId) {
+      document.getElementById('dep-stop-id').value = stopId;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector('[data-tab="departures"]').classList.add('active');
+      document.getElementById('panel-departures').classList.add('active');
+      getDepartures();
+    }
+
+    // --- Linien ---
+    async function searchRoutes() {
+      const type = document.getElementById('route-type').value;
+      const agency = document.getElementById('route-agency').value.trim();
+      const el = document.getElementById('routes-result');
+      el.innerHTML = '<div class="loading">Suche</div>';
+
+      let where = '1=1';
+      if (type !== '' && ROUTE_TYPE_FILTERS[type]) where += ` AND ${ROUTE_TYPE_FILTERS[type]}`;
+      if (agency) where += ` AND r.agency_id = '${agency.replace(/'/g, "''")}'`;
+
+      try {
+        const data = await apiPost('/api/query', {
+          sql: `SELECT r.route_id, r.route_short_name, r.route_long_name, r.route_type,
+                       r.agency_id, a.agency_name
+                FROM routes r LEFT JOIN agency a ON r.agency_id = a.agency_id
+                WHERE ${where}
+                ORDER BY r.route_short_name LIMIT 100`
+        });
+
+        if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
+        if (!data.results || data.results.length === 0) { el.innerHTML = '<div class="empty">Keine Ergebnisse</div>'; return; }
+
+        el.innerHTML = `
+          <div class="count">${data.count} Ergebnis${data.count !== 1 ? 'se' : ''}</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Linie</th><th>Name</th><th>Typ</th><th>Unternehmen</th></tr></thead>
+            <tbody>${data.results.map(r => `
+              <tr>
+                <td><strong>${r.route_short_name || r.route_id}</strong></td>
+                <td>${r.route_long_name || ''}</td>
+                <td>${routeTypeBadge(r.route_type)}</td>
+                <td>${r.agency_name || r.agency_id || ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    // --- Abfahrten ---
+    async function getDepartures() {
+      const stopId = document.getElementById('dep-stop-id').value.trim();
+      if (!stopId) return;
+      const dateInput = document.getElementById('dep-date').value;
+      const timeInput = document.getElementById('dep-time').value;
+      const date = dateInput ? dateInput.replace(/-/g, '') : new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const el = document.getElementById('departures-result');
+      el.innerHTML = '<div class="loading">Lade Abfahrten</div>';
+
+      const days = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];
+      const d = new Date(parseInt(date.slice(0,4)), parseInt(date.slice(4,6))-1, parseInt(date.slice(6,8)));
+      const dayCol = days[d.getDay()];
+      const timeFrom = timeInput ? timeInput + ':00' : '00:00:00';
+
+      try {
+        const data = await apiPost('/api/query', {
+          sql: `SELECT st.departure_time, t.trip_id, t.trip_headsign, r.route_short_name, r.route_type, a.agency_name
+                FROM stop_times st
+                JOIN trips t ON st.trip_id = t.trip_id
+                JOIN routes r ON t.route_id = r.route_id
+                LEFT JOIN agency a ON r.agency_id = a.agency_id
+                LEFT JOIN calendar c ON t.service_id = c.service_id
+                WHERE st.stop_id = '${stopId.replace(/'/g, "''")}'
+                  AND st.departure_time >= '${timeFrom}'
+                  AND c.${dayCol} = 1
+                  AND c.start_date <= '${date}' AND c.end_date >= '${date}'
+                ORDER BY st.departure_time LIMIT 50`
+        });
+
+        if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
+        if (!data.results || data.results.length === 0) { el.innerHTML = '<div class="empty">Keine Abfahrten gefunden. Pr&uuml;fe die Stop-ID und das Datum.</div>'; return; }
+
+        el.innerHTML = `
+          <div class="count">${data.count} Abfahrten ab <strong>${stopId}</strong></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Zeit</th><th>Linie</th><th>Richtung</th><th>Typ</th><th>Unternehmen</th></tr></thead>
+            <tbody>${data.results.map(dep => `
+              <tr>
+                <td><strong>${dep.departure_time || ''}</strong></td>
+                <td><a href="#" onclick="showTrip('${dep.trip_id}'); return false" style="color:var(--accent); text-decoration:none">${dep.route_short_name || ''}</a></td>
+                <td>${dep.trip_headsign || ''}</td>
+                <td>${routeTypeBadge(dep.route_type)}</td>
+                <td>${dep.agency_name || ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    function showTrip(tripId) {
+      document.getElementById('trip-id').value = tripId;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      document.querySelector('[data-tab="trip"]').classList.add('active');
+      document.getElementById('panel-trip').classList.add('active');
+      getTripDetails();
+    }
+
+    // --- Fahrt-Details ---
+    async function getTripDetails() {
+      const tripId = document.getElementById('trip-id').value.trim();
+      if (!tripId) return;
+      const el = document.getElementById('trip-result');
+      el.innerHTML = '<div class="loading">Lade Details</div>';
+
+      try {
+        const tripData = await apiPost('/api/query', {
+          sql: `SELECT t.trip_id, t.trip_headsign, r.route_short_name, r.route_long_name, r.route_type, a.agency_name
+                FROM trips t JOIN routes r ON t.route_id = r.route_id LEFT JOIN agency a ON r.agency_id = a.agency_id
+                WHERE t.trip_id = '${tripId.replace(/'/g, "''")}'`
+        });
+
+        const stopsData = await apiPost('/api/query', {
+          sql: `SELECT st.stop_sequence, st.arrival_time, st.departure_time, s.stop_id, s.stop_name
+                FROM stop_times st JOIN stops s ON st.stop_id = s.stop_id
+                WHERE st.trip_id = '${tripId.replace(/'/g, "''")}'
+                ORDER BY st.stop_sequence`
+        });
+
+        if (!tripData.results?.length) { el.innerHTML = '<div class="empty">Fahrt nicht gefunden</div>'; return; }
+        const trip = tripData.results[0];
+
+        el.innerHTML = `
+          <div style="margin-bottom:16px">
+            ${routeTypeBadge(trip.route_type)}
+            <strong style="margin-left:8px; font-size:18px">${trip.route_short_name || ''}</strong>
+            <span style="color:var(--text-dim); margin-left:8px">${trip.trip_headsign || trip.route_long_name || ''}</span>
+            <span style="color:var(--text-dim); margin-left:8px">&mdash; ${trip.agency_name || ''}</span>
+          </div>
+          <div class="count">${stopsData.count || 0} Halte</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>#</th><th>Ankunft</th><th>Abfahrt</th><th>Haltestelle</th><th>Stop ID</th></tr></thead>
+            <tbody>${(stopsData.results || []).map(s => `
+              <tr>
+                <td>${s.stop_sequence}</td>
+                <td>${s.arrival_time || ''}</td>
+                <td><strong>${s.departure_time || ''}</strong></td>
+                <td>${s.stop_name || ''}</td>
+                <td><a href="#" onclick="showDepartures('${s.stop_id}'); return false" style="color:var(--accent); text-decoration:none; font-size:12px">${s.stop_id}</a></td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    // --- Unternehmen ---
+    async function getAgencies() {
+      const el = document.getElementById('agencies-result');
+      if (el.querySelector('table')) return; // Already loaded
+      el.innerHTML = '<div class="loading">Lade</div>';
+
+      try {
+        const data = await apiPost('/api/query', {
+          sql: `SELECT a.agency_id, a.agency_name, a.agency_url, COUNT(r.route_id) as route_count
+                FROM agency a LEFT JOIN routes r ON a.agency_id = r.agency_id
+                GROUP BY a.agency_id ORDER BY route_count DESC LIMIT 100`
+        });
+
+        if (!data.results?.length) { el.innerHTML = '<div class="empty">Keine Daten</div>'; return; }
+
+        el.innerHTML = `
+          <div class="count">${data.count} Unternehmen</div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>ID</th><th>Name</th><th>Linien</th><th>Website</th></tr></thead>
+            <tbody>${data.results.map(a => `
+              <tr>
+                <td>${a.agency_id}</td>
+                <td><strong>${a.agency_name || ''}</strong></td>
+                <td>${formatNum(a.route_count)}</td>
+                <td>${a.agency_url ? `<a href="${a.agency_url}" target="_blank" style="color:var(--accent); text-decoration:none; font-size:12px">${a.agency_url}</a>` : ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    // --- SQL ---
+    async function runSQL() {
+      const sql = document.getElementById('sql-query').value.trim();
+      if (!sql) return;
+      const el = document.getElementById('sql-result');
+      el.innerHTML = '<div class="loading">Ausführen</div>';
+
+      try {
+        const data = await apiPost('/api/query', { sql });
+
+        if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
+        if (!data.results || data.results.length === 0) { el.innerHTML = '<div class="empty">Keine Ergebnisse</div>'; return; }
+
+        const cols = Object.keys(data.results[0]);
+        el.innerHTML = `
+          <div class="count">${data.count} Ergebnis${data.count !== 1 ? 'se' : ''}</div>
+          <div class="table-wrap"><table>
+            <thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>
+            <tbody>${data.results.map(row => `
+              <tr>${cols.map(c => `<td>${row[c] ?? ''}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table></div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    // Ctrl+Enter for SQL
+    document.getElementById('sql-query').addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') runSQL();
+    });
+
+    // --- Status ---
+    async function loadStatus() {
+      const el = document.getElementById('status-result');
+      try {
+        const data = await apiCall('/health');
+        const t = data.database?.tables || {};
+
+        el.innerHTML = `
+          <div class="status-grid">
+            <div class="stat-card"><div class="value">${formatNum(data.database?.total_rows)}</div><div class="label">Zeilen Total</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.stops)}</div><div class="label">Haltestellen</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.routes)}</div><div class="label">Linien</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.trips)}</div><div class="label">Fahrten</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.stop_times)}</div><div class="label">Haltezeiten</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.agency)}</div><div class="label">Unternehmen</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.transfers)}</div><div class="label">Umsteige</div></div>
+            <div class="stat-card"><div class="value">${formatNum(t.calendar)}</div><div class="label">Kalender</div></div>
+          </div>
+          <div style="margin-top:16px; font-size:13px; color:var(--text-dim)">
+            <p><strong>GTFS-Datei:</strong> ${data.database?.gtfs_filename || '-'}</p>
+            <p><strong>Heruntergeladen:</strong> ${data.database?.gtfs_downloaded_at ? new Date(data.database.gtfs_downloaded_at).toLocaleString('de-CH') : '-'}</p>
+            <p><strong>Importiert:</strong> ${data.database?.imported_at ? new Date(data.database.imported_at).toLocaleString('de-CH') : '-'}</p>
+            <p><strong>Datenbank:</strong> ${data.database?.path || '-'}</p>
+          </div>`;
+      } catch (err) {
+        el.innerHTML = `<div class="error">${err.message}</div>`;
+      }
+    }
+
+    // --- Docs ---
+    let docsLoaded = false;
+    async function loadDocs() {
+      if (docsLoaded) return;
+      try {
+        const data = await apiCall('/health');
+        const t = data.database?.tables || {};
+        const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+
+        el('doc-gtfs-file-value', data.database?.gtfs_filename || '–');
+        el('doc-gtfs-downloaded', data.database?.gtfs_downloaded_at ? new Date(data.database.gtfs_downloaded_at).toLocaleString('de-CH') : '–');
+        el('doc-rows-agency', formatNum(t.agency));
+        el('doc-rows-stops', formatNum(t.stops));
+        el('doc-rows-routes', formatNum(t.routes));
+        el('doc-rows-trips', formatNum(t.trips));
+        el('doc-rows-stop_times', formatNum(t.stop_times));
+        el('doc-rows-calendar', formatNum(t.calendar));
+        el('doc-rows-calendar_dates', formatNum(t.calendar_dates));
+        el('doc-rows-feed_info', formatNum(t.feed_info));
+        el('doc-rows-transfers', formatNum(t.transfers));
+        docsLoaded = true;
+      } catch {}
+    }
+
+    // --- Init ---
+    async function init() {
+      try {
+        const data = await apiCall('/health');
+        document.getElementById('status-badge').textContent = data.status === 'ok' ? 'Online' : 'Fehler';
+        document.getElementById('status-badge').style.background = data.status === 'ok'
+          ? 'color-mix(in srgb, var(--green) 15%, transparent)' : 'color-mix(in srgb, var(--red) 15%, transparent)';
+        document.getElementById('status-badge').style.color = data.status === 'ok' ? 'var(--green)' : 'var(--red)';
+
+        const t = data.database?.tables || {};
+        document.getElementById('header-stats').innerHTML =
+          `${formatNum(t.stops)} Haltestellen &middot; ${formatNum(t.routes)} Linien &middot; ${data.database?.gtfs_filename || ''}`;
+
+        // Set today's date
+        document.getElementById('dep-date').value = new Date().toISOString().slice(0, 10);
+      } catch {
+        document.getElementById('status-badge').textContent = 'Offline';
+        document.getElementById('status-badge').style.background = 'color-mix(in srgb, var(--red) 15%, transparent)';
+        document.getElementById('status-badge').style.color = 'var(--red)';
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
-  "filename": "gtfs_fp2025_2025-05-22.zip",
-  "url": "https://data.opentransportdata.swiss/dataset/6cca1dfb-e53d-4da8-8d49-4797b3e768e3/resource/58e06b61-b230-4206-9432-19bf0c8832ae/download/gtfs_fp2025_2025-05-22.zip",
-  "downloaded_at": "2025-05-22T21:46:47.348Z",
-  "unpacked_to": "D:\\DEV\\mcp-gtfs\\zvv-data\\gtfs",
-  "source_page": "https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020"
+  "filename": "gtfs_fp2026_20260209.zip",
+  "url": "https://data.opentransportdata.swiss/dataset/3d2c18f9-9ef1-463f-a249-5c67604efd74/resource/4bc3b1f0-425b-4476-9fa7-de5f28423bf1/download/gtfs_fp2026_20260209.zip",
+  "downloaded_at": "2026-02-11T09:57:38.458Z",
+  "unpacked_to": "C:\\DEV\\zvvch\\mcp-gtfs\\zvv-data\\gtfs",
+  "source_page": "https://data.opentransportdata.swiss/de/dataset/timetable-2026-gtfs2020"
 }

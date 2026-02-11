@@ -1,14 +1,19 @@
 # Git
 .git
 .gitignore
+.gitattributes
 
 # Node
 node_modules
 npm-debug.log
 
-# GTFS-Daten
+# GTFS-Rohdaten und DB (werden im Container neu erzeugt)
 zvv-data/gtfs/*.txt
 zvv-data/gtfs/*.zip
+zvv-data/*.db
+
+# Tests
+test/
 
 # IDE
 .vscode
@@ -16,4 +21,7 @@ zvv-data/gtfs/*.zip
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Vercel
+.vercel

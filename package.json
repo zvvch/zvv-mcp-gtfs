@@ -1,14 +1,24 @@
 {
   "name": "mcp-gtfs",
-  "version": "1.0.0",
-  "description": "GTFS-Daten für Spice.ai MCP",
-  "main": "download-gtfs.js",
+  "version": "2.0.0",
+  "description": "MCP Server für Schweizer ÖV-Fahrplandaten (GTFS) – abfragbar via AI/LLM",
+  "main": "server.js",
   "scripts": {
-    "postinstall": "node download-gtfs.js",
-    "start": "node server.js"
+    "download": "node download-gtfs.js",
+    "import": "node import-gtfs.js",
+    "build": "node download-gtfs.js && node import-gtfs.js",
+    "start": "node server.js",
+    "test": "node --test test/smoke.test.js"
   },
   "dependencies": {
-    "cheerio": "^1.0.0-rc.12",
-    "unzipper": "^0.10.11"
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^11.0.0",
+    "cheerio": "^1.0.0",
+    "express": "^4.21.0",
+    "unzipper": "^0.12.0",
+    "zod": "^3.25.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

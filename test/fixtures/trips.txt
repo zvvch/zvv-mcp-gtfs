@@ -1,0 +1,5 @@
+route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+91-10-A-j25-1,TA+b0001,1.TA.91-10-A-j25-1.1.H,"Zürich, Flughafen",,0,,,0,0
+91-10-A-j25-1,TA+b0001,2.TA.91-10-A-j25-1.2.R,"Zürich, Bahnhofplatz/HB",,1,,,0,0
+91-S3-1,TA+b0002,3.TA.91-S3-1.1.H,"Aarau",,0,,,1,1
+91-IC-1,TA+b0003,4.TA.91-IC-1.1.H,"Bern",,0,,,1,1
