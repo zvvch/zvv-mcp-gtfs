@@ -141,7 +141,7 @@ function createMcpServer() {
   // 3. get_departures - Abfahrten ab Haltestelle
   server.tool(
     'get_departures',
-    'Gibt Abfahrten von einer Haltestelle zurück. Zeigt Linie, Richtung und Abfahrtszeit.',
+    'Gibt Abfahrten von einer Haltestelle zurück. Zeigt Linie, Richtung und Abfahrtszeit. Löst Parent-Stations automatisch auf (inkl. aller Gleise/Perrons).',
     {
       stop_id: z.string().describe('Haltestellen-ID (stop_id)'),
       date: z.string().optional().describe('Datum im Format YYYYMMDD (default: heute)'),
@@ -163,6 +163,8 @@ function createMcpServer() {
 
       const startTime = time_from || '00:00:00';
 
+      // Parent-Station aufloesen: Wenn stop_id ein Parent ist (location_type=1),
+      // auch alle Kind-Stops (Gleise/Perrons) einbeziehen
       const results = d.prepare(`
         SELECT
           st.departure_time,
@@ -179,21 +181,35 @@ function createMcpServer() {
         JOIN trips t ON st.trip_id = t.trip_id
         JOIN routes r ON t.route_id = r.route_id
         LEFT JOIN agency a ON r.agency_id = a.agency_id
-        LEFT JOIN calendar c ON t.service_id = c.service_id
-        WHERE st.stop_id = ?
+        WHERE (
+            st.stop_id = ?
+            OR st.stop_id IN (SELECT stop_id FROM stops WHERE parent_station = ?)
+          )
           AND st.departure_time >= ?
           AND (
-            c.${dayCol} = 1
-            AND c.start_date <= ?
-            AND c.end_date >= ?
-          )
-          AND t.service_id NOT IN (
-            SELECT service_id FROM calendar_dates
-            WHERE date = ? AND exception_type = 2
+            -- Fall 1: Service aktiv via calendar (Basis-Fahrplan)
+            (
+              t.service_id IN (
+                SELECT service_id FROM calendar
+                WHERE ${dayCol} = 1
+                  AND start_date <= ?
+                  AND end_date >= ?
+              )
+              AND t.service_id NOT IN (
+                SELECT service_id FROM calendar_dates
+                WHERE date = ? AND exception_type = 2
+              )
+            )
+            OR
+            -- Fall 2: Service explizit hinzugefuegt via calendar_dates
+            t.service_id IN (
+              SELECT service_id FROM calendar_dates
+              WHERE date = ? AND exception_type = 1
+            )
           )
         ORDER BY st.departure_time
         LIMIT ?
-      `).all(stop_id, startTime, targetDate, targetDate, targetDate, limit);
+      `).all(stop_id, stop_id, startTime, targetDate, targetDate, targetDate, targetDate, limit);
 
       return {
         content: [{

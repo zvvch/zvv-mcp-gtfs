@@ -861,17 +861,35 @@ fetch('/api/query', {
       const timeFrom = timeInput ? timeInput + ':00' : '00:00:00';
 
       try {
+        const safeId = stopId.replace(/'/g, "''");
         const data = await apiPost('/api/query', {
           sql: `SELECT st.departure_time, t.trip_id, t.trip_headsign, r.route_short_name, r.route_type, a.agency_name
                 FROM stop_times st
                 JOIN trips t ON st.trip_id = t.trip_id
                 JOIN routes r ON t.route_id = r.route_id
                 LEFT JOIN agency a ON r.agency_id = a.agency_id
-                LEFT JOIN calendar c ON t.service_id = c.service_id
-                WHERE st.stop_id = '${stopId.replace(/'/g, "''")}'
+                WHERE (
+                    st.stop_id = '${safeId}'
+                    OR st.stop_id IN (SELECT stop_id FROM stops WHERE parent_station = '${safeId}')
+                  )
                   AND st.departure_time >= '${timeFrom}'
-                  AND c.${dayCol} = 1
-                  AND c.start_date <= '${date}' AND c.end_date >= '${date}'
+                  AND (
+                    (
+                      t.service_id IN (
+                        SELECT service_id FROM calendar
+                        WHERE ${dayCol} = 1
+                          AND start_date <= '${date}' AND end_date >= '${date}'
+                      )
+                      AND t.service_id NOT IN (
+                        SELECT service_id FROM calendar_dates
+                        WHERE date = '${date}' AND exception_type = 2
+                      )
+                    )
+                    OR t.service_id IN (
+                      SELECT service_id FROM calendar_dates
+                      WHERE date = '${date}' AND exception_type = 1
+                    )
+                  )
                 ORDER BY st.departure_time LIMIT 50`
         });
 
