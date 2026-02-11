@@ -290,40 +290,18 @@ else
 fi
 
 # ── 11. Update-Script & Cron ─────────────────────────────────────
-info "Richte woechentlichen GTFS-Update Cron ein..."
+info "Richte taeglichen GTFS Smart-Update Cron ein..."
 
-cat > /home/gtfs/update-gtfs.sh <<'UPDEOF'
-#!/bin/bash
-set -e
-LOG=/home/gtfs/update-gtfs.log
-echo "$(date '+%Y-%m-%d %H:%M:%S'): Starte GTFS-Update..." >> "$LOG"
-
-cd /home/gtfs/app
-
-# Server stoppen fuer sauberen DB-Wechsel
-sudo systemctl stop gtfs
-
-# Alte Daten entfernen
-rm -f zvv-data/gtfs/*.txt zvv-data/gtfs.db zvv-data/gtfs.db-wal zvv-data/gtfs.db-shm
-
-# Neue Daten laden & importieren
-node download-gtfs.js
-node import-gtfs.js
-
-# Server starten
-sudo systemctl start gtfs
-
-echo "$(date '+%Y-%m-%d %H:%M:%S'): GTFS-Update erfolgreich" >> "$LOG"
-UPDEOF
-
+# Update-Script aus dem Repository verwenden
+cp /home/gtfs/app/deploy/update-gtfs.sh /home/gtfs/update-gtfs.sh
 chmod +x /home/gtfs/update-gtfs.sh
 chown gtfs:gtfs /home/gtfs/update-gtfs.sh
 
-# Cron: Mittwoch 03:00 Uhr
+# Cron: Taeglich 03:00 Uhr (Script prueft selbst ob neue Daten da sind)
 ( crontab -u gtfs -l 2>/dev/null | grep -v 'update-gtfs' || true
-  echo "0 3 * * 3 /home/gtfs/update-gtfs.sh >> /home/gtfs/update-gtfs.log 2>&1"
+  echo "0 3 * * * /home/gtfs/update-gtfs.sh >> /home/gtfs/update-gtfs.log 2>&1"
 ) | crontab -u gtfs -
-ok "Cron-Job: Mittwoch 03:00 Uhr"
+ok "Cron-Job: Taeglich 03:00 Uhr (Smart-Update)"
 
 # ── 12. Sudoers ──────────────────────────────────────────────────
 cat > /etc/sudoers.d/gtfs <<'SUDOEOF'

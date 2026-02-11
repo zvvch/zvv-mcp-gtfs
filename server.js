@@ -475,7 +475,8 @@ function createApp() {
           exists: fs.existsSync(DB_PATH),
           ...meta,
           tables: stats
-        }
+        },
+        update: updateStatus
       });
     } catch (err) {
       res.status(503).json({
@@ -555,6 +556,33 @@ function createApp() {
   return app;
 }
 
+// --- GTFS Update-Status (wird beim Start gesetzt) ---
+let updateStatus = { checked: false, updateAvailable: false, latest: null, checkedAt: null, error: null };
+
+async function checkGtfsUpdateOnStartup() {
+  try {
+    const { checkForUpdate } = require('./check-update.js');
+    const result = await checkForUpdate({ checkOnly: true });
+    updateStatus = {
+      checked: true,
+      updateAvailable: result.updateAvailable || false,
+      current: result.current || null,
+      latest: result.latest || null,
+      latestUrl: result.latestUrl || null,
+      checkedAt: new Date().toISOString(),
+      error: result.error || null
+    };
+    if (result.updateAvailable) {
+      console.log(`\n  ⚠  Neues GTFS-Update verfuegbar: ${result.latest}`);
+      console.log(`     Aktuell: ${result.current || '(keine)'}`);
+      console.log(`     Update mit: node check-update.js\n`);
+    }
+  } catch (err) {
+    updateStatus = { checked: true, updateAvailable: false, checkedAt: new Date().toISOString(), error: err.message };
+    console.error(`[Update-Check] Fehler: ${err.message}`);
+  }
+}
+
 // --- Server starten ---
 if (require.main === module) {
   const app = createApp();
@@ -563,6 +591,9 @@ if (require.main === module) {
     console.log(`  MCP Endpoint:  http://localhost:${PORT}/mcp`);
     console.log(`  Health Check:  http://localhost:${PORT}/health`);
     console.log(`  Datenbank:     ${DB_PATH}`);
+
+    // Async Update-Check im Hintergrund (blockiert Server-Start nicht)
+    checkGtfsUpdateOnStartup();
   });
 }
 

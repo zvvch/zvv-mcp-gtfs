@@ -8,6 +8,9 @@
     "import": "node import-gtfs.js",
     "build": "node download-gtfs.js && node import-gtfs.js",
     "start": "node server.js",
+    "check-update": "node check-update.js --check",
+    "update": "node check-update.js",
+    "force-update": "node check-update.js --force",
     "test": "node --test test/smoke.test.js"
   },
   "dependencies": {
