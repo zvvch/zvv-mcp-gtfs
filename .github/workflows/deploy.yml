@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:  # Manueller Trigger via GitHub UI
+  workflow_dispatch:
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -29,53 +29,34 @@ jobs:
   deploy:
     name: Deploy to LXC
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
 
     steps:
-      - name: Trigger deploy webhook
+      - name: Pull latest code
+        working-directory: /home/gtfs/app
+        run: git pull --ff-only
+
+      - name: Install dependencies
+        working-directory: /home/gtfs/app
+        run: npm install --production --no-fund --no-audit
+
+      - name: Restart server
+        run: sudo systemctl restart gtfs
+
+      - name: Health check
         run: |
-          echo "=== Triggering deploy on gtfs.zvv.dev ==="
-
-          RESPONSE=$(curl -sf -X POST \
-            -H "Authorization: Bearer ${{ secrets.DEPLOY_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"ref":"${{ github.sha }}","actor":"${{ github.actor }}"}' \
-            "${{ secrets.DEPLOY_URL }}" \
-            --max-time 30 \
-            -w "\n%{http_code}" 2>&1) || true
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
-          BODY=$(echo "$RESPONSE" | head -n -1)
-
-          echo "Response: $BODY"
-          echo "HTTP Status: $HTTP_CODE"
-
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Deploy fehlgeschlagen (HTTP $HTTP_CODE)"
-            exit 1
-          fi
-
-          echo "Deploy gestartet – warte auf Restart..."
-
-      - name: Wait for server restart
-        run: |
-          HEALTH_URL="${{ secrets.DEPLOY_URL }}"
-          HEALTH_URL="${HEALTH_URL%/api/deploy}/health"
-
-          echo "Health-Check: $HEALTH_URL"
-          echo "Warte 15s auf Restart..."
-          sleep 15
-
-          for i in $(seq 1 12); do
-            if HEALTH=$(curl -sf "$HEALTH_URL" --max-time 10 2>&1); then
-              echo "=== Server ist online ==="
-              echo "$HEALTH" | python3 -m json.tool 2>/dev/null || echo "$HEALTH"
+          echo "Warte auf Server..."
+          sleep 3
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:3000/health >/dev/null 2>&1; then
+              echo "Server ist online!"
+              curl -sf http://localhost:3000/health | python3 -m json.tool 2>/dev/null || true
               exit 0
             fi
-            echo "Versuch $i/12 – noch nicht bereit..."
-            sleep 5
+            echo "Versuch $i/15..."
+            sleep 2
           done
-
-          echo "::error::Server antwortet nicht nach 75s!"
+          echo "::error::Server antwortet nicht!"
+          journalctl -u gtfs --no-pager -n 30
           exit 1

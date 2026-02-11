@@ -6,12 +6,9 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
-const { execFile } = require('child_process');
-
 // --- Konfiguration ---
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const DB_PATH = process.env.GTFS_DB_PATH || path.join(__dirname, 'zvv-data', 'gtfs.db');
-const DEPLOY_SECRET = process.env.DEPLOY_SECRET || '';
 
 // --- Datenbank ---
 let db;
@@ -536,61 +533,6 @@ function createApp() {
     } catch (err) {
       res.status(400).json({ error: `SQL-Fehler: ${err.message}` });
     }
-  });
-
-  // Deploy-Webhook (fuer GitHub Actions)
-  app.post('/api/deploy', express.json(), (req, res) => {
-    // Auth pruefen
-    const auth = req.headers.authorization || '';
-    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-
-    if (!DEPLOY_SECRET) {
-      return res.status(503).json({ error: 'DEPLOY_SECRET nicht konfiguriert.' });
-    }
-    if (!token || token !== DEPLOY_SECRET) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    // Bereits ein Deploy am Laufen?
-    if (global._deployRunning) {
-      return res.status(409).json({ error: 'Deploy laeuft bereits.' });
-    }
-    global._deployRunning = true;
-
-    console.log('[Deploy] Webhook empfangen – starte Deployment...');
-
-    // Sofort antworten, Deploy laeuft async
-    res.json({ status: 'deploying', message: 'Deploy gestartet. Server wird in ~30s neu starten.' });
-
-    // Deploy im Hintergrund: git pull → npm install → exit (systemd restart)
-    const deployScript = `
-      cd ${__dirname} &&
-      git pull --ff-only 2>&1 &&
-      npm install --production --no-fund --no-audit 2>&1 &&
-      echo "DEPLOY_OK"
-    `;
-
-    execFile('/bin/bash', ['-c', deployScript], { timeout: 120000 }, (err, stdout, stderr) => {
-      global._deployRunning = false;
-
-      if (err) {
-        console.error('[Deploy] Fehler:', err.message);
-        console.error('[Deploy] stderr:', stderr);
-        return;
-      }
-
-      console.log('[Deploy] Output:', stdout);
-
-      if (stdout.includes('DEPLOY_OK')) {
-        console.log('[Deploy] Erfolgreich – Server wird neu gestartet...');
-        // Kurz warten, dann beenden. systemd startet uns neu.
-        setTimeout(() => {
-          process.exit(0);
-        }, 2000);
-      } else {
-        console.error('[Deploy] Unerwarteter Output – kein Restart.');
-      }
-    });
   });
 
   // Root -> Frontend (wenn public/index.html existiert, wird express.static bedient)
