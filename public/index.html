@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ZVV GTFS Explorer</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -737,6 +738,23 @@
       line-height: 1.4;
     }
 
+    /* Mermaid Diagram */
+    .mermaid-wrap {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 16px;
+      margin: 16px 0;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mermaid-wrap svg {
+      max-width: 100%;
+      height: auto;
+    }
+
     /* Responsive */
     @media (max-width: 640px) {
       .app { padding: 0 12px 40px; }
@@ -1027,28 +1045,23 @@
                   <div class="step-desc">SQLite-DB über Express.js bereitstellen: MCP-Endpoint, REST-API und Health-Check</div>
                 </div>
               </div>
-              <div class="code-wrap">
-<pre>opentransportdata.swiss
-        │
-        ▼
-  ┌─────────────┐     ┌──────────────┐     ┌────────────────┐
-  │  GTFS ZIP    │────▶│  CSV-Dateien  │────▶│  SQLite DB     │
-  │  (~320 MB)   │     │  (9 Dateien)  │     │  (~2.7 GB)     │
-  └─────────────┘     └──────────────┘     └───────┬────────┘
-    download-gtfs.js    import-gtfs.js              │
-                                                    ▼
-                                          ┌─────────────────┐
-                                          │  MCP Server      │
-                                          │  (Express.js)    │
-                                          │                  │
-                                          │  POST /mcp       │◀── KI/LLM
-                                          │  POST /api/query │◀── Frontend
-                                          │  GET  /health    │◀── Monitoring
-                                          └─────────────────┘</pre>
-                <button class="copy-btn" onclick="copyCode(this)" title="In Zwischenablage kopieren">
-                  <svg width="12" height="12" viewBox="0 0 20 20" fill="currentColor"><path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"/><path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z"/></svg>
-                  Kopieren
-                </button>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+flowchart TD
+    A["opentransportdata.swiss"]:::source -->|"download-gtfs.js"| B["GTFS ZIP · ~320 MB"]:::file
+    B -->|"Entpacken"| C["CSV-Dateien · 9 Dateien"]:::file
+    C -->|"import-gtfs.js"| D[("SQLite DB · ~2.7 GB")]:::db
+    D --> E["MCP Server · Express.js"]:::server
+    E -->|"POST /mcp"| F["KI / LLM"]:::client
+    E -->|"POST /api/query"| G["Frontend"]:::client
+    E -->|"GET /health"| H["Monitoring"]:::client
+
+    classDef source fill:#172554,stroke:#3b82f6,stroke-width:2px,color:#93c5fd,font-weight:600
+    classDef file fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#86efac,font-weight:600
+    classDef db fill:#1e1b4b,stroke:#a78bfa,stroke-width:2px,color:#c4b5fd,font-weight:600
+    classDef server fill:#172554,stroke:#3b82f6,stroke-width:2px,color:#93c5fd,font-weight:600
+    classDef client fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fcd34d,font-weight:600
+                </pre>
               </div>
             </div>
 
@@ -1220,6 +1233,35 @@ fetch('/api/query', {
   </div>
 
   <script>
+    // --- Mermaid Init ---
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: 'transparent',
+        primaryColor: '#172554',
+        primaryTextColor: '#e4e6eb',
+        primaryBorderColor: '#3b82f6',
+        lineColor: '#475569',
+        secondaryColor: '#052e16',
+        tertiaryColor: '#1e1b4b',
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+        fontSize: '13px',
+        edgeLabelBackground: '#111318',
+        clusterBkg: 'transparent',
+        clusterBorder: '#1e2130'
+      },
+      flowchart: {
+        htmlLabels: true,
+        curve: 'basis',
+        padding: 16,
+        nodeSpacing: 50,
+        rankSpacing: 45,
+        useMaxWidth: true
+      }
+    });
+
     // --- API Helper ---
     async function callTool(name, args = {}) {
       const res = await fetch('/mcp', {
