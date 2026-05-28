@@ -152,6 +152,19 @@ const GTFS_TABLES = {
       'CREATE INDEX IF NOT EXISTS idx_transfers_from ON transfers(from_stop_id)',
       'CREATE INDEX IF NOT EXISTS idx_transfers_to ON transfers(to_stop_id)'
     ]
+  },
+  frequencies: {
+    file: 'frequencies.txt',
+    columns: {
+      trip_id: 'TEXT NOT NULL',
+      start_time: 'TEXT NOT NULL',
+      end_time: 'TEXT NOT NULL',
+      headway_secs: 'INTEGER NOT NULL',
+      exact_times: 'INTEGER'
+    },
+    indexes: [
+      'CREATE INDEX IF NOT EXISTS idx_frequencies_trip ON frequencies(trip_id)'
+    ]
   }
 };
 

@@ -56,7 +56,7 @@ describe('GTFS Import', () => {
     assert.ok(fs.existsSync(TEST_DB_PATH), 'DB-Datei existiert nicht');
   });
 
-  it('sollte alle 9 GTFS-Tabellen anlegen', () => {
+  it('sollte alle 10 GTFS-Tabellen anlegen', () => {
     const Database = require('better-sqlite3');
     const db = new Database(TEST_DB_PATH, { readonly: true });
     const tables = db.prepare(
@@ -65,7 +65,7 @@ describe('GTFS Import', () => {
     db.close();
 
     assert.deepEqual(tables, [
-      'agency', 'calendar', 'calendar_dates', 'feed_info',
+      'agency', 'calendar', 'calendar_dates', 'feed_info', 'frequencies',
       'routes', 'stop_times', 'stops', 'transfers', 'trips'
     ]);
   });

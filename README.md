@@ -10,7 +10,7 @@ Dieses Projekt stellt die offiziellen **GTFS-Fahrplandaten** der Schweiz (via [o
 
 ```mermaid
 flowchart TD
-    GTFS["opentransportdata.swiss<br/>GTFS ZIP"] -->|download-gtfs.js| CSV["CSV-Dateien<br/>9 GTFS-Tabellen"]
+    GTFS["opentransportdata.swiss<br/>GTFS ZIP"] -->|download-gtfs.js| CSV["CSV-Dateien<br/>10 GTFS-Tabellen"]
     CSV -->|import-gtfs.js| DB["SQLite DB<br/>zvv-gtfs.db"]
     DB --> MCP["MCP Server<br/>@modelcontextprotocol/sdk"]
     MCP -->|StreamableHTTP| Client["AI/LLM Client<br/>Claude, ChatGPT, etc."]
@@ -19,7 +19,7 @@ flowchart TD
 ## Features
 
 - 6 MCP-Tools für strukturierte GTFS-Abfragen
-- SQLite-Datenbank mit allen 9 GTFS-Tabellen + Indexen
+- SQLite-Datenbank mit allen 10 GTFS-Tabellen + Indexen
 - Automatischer Download der neuesten Fahrplandaten
 - StreamableHTTP-Transport (MCP-Standard)
 - Vercel- und Docker-Deployment
@@ -143,6 +143,7 @@ Die Fahrplandaten stammen von [opentransportdata.swiss](https://data.opentranspo
 - `calendar_dates` -- Ausnahmen (Feiertage etc.)
 - `feed_info` -- Metadaten zum Fahrplan
 - `transfers` -- Umsteigebeziehungen
+- `frequencies` -- Taktfahrten (start/end, Headway in Sekunden)
 
 ## Tests
 
@@ -152,7 +153,7 @@ npm test
 
 30 Smoke Tests prüfen:
 - CSV-Parser (Anführungszeichen, Escaping, leere Felder)
-- SQLite-Import (alle 9 Tabellen, Zeilenanzahl, Metadaten)
+- SQLite-Import (alle 10 Tabellen, Zeilenanzahl, Metadaten)
 - HTTP-Endpoints (Health, MCP, Server-Info)
 - MCP-Tools (Suche, Filter, Joins)
 - Security (SQL-Injection-Schutz)
