@@ -63,6 +63,56 @@ function getDbStats() {
   return stats;
 }
 
+// Aeltere Datenbanken kennen original_stop_id noch nicht.
+let originalColCache;
+function hasOriginalStopId(d) {
+  if (originalColCache === undefined) {
+    originalColCache = d.prepare('PRAGMA table_info(stops)').all().some(c => c.name === 'original_stop_id');
+  }
+  return originalColCache;
+}
+
+/**
+ * Findet alle Haltestellen-IDs, die zur uebergebenen gehoeren.
+ *
+ * Schweizer GTFS kennt mehrere Ebenen fuer denselben Ort: Station
+ * (ch:1:sloid:3000), Elternstation (Parentch:1:sloid:3000) und einzelne
+ * Gleise (ch:1:sloid:3000:3:4). Wer nach Abfahrten fragt, meint praktisch
+ * immer alle davon.
+ *
+ * Seit Feed 2026-07 sind die alten DIDOK-Nummern (8503000) durch SLOIDs
+ * ersetzt. Ohne die Aufloesung ueber original_stop_id liefert eine bekannte
+ * Nummer stillschweigend null Abfahrten -- schlimmer als ein Fehler, weil es
+ * wie ein leerer Fahrplan aussieht.
+ */
+function resolveRelatedStops(d, stopId) {
+  const useOriginal = hasOriginalStopId(d);
+  const seeds = useOriginal
+    ? d.prepare('SELECT stop_id, parent_station FROM stops WHERE stop_id = ? OR original_stop_id = ?').all(stopId, stopId)
+    : d.prepare('SELECT stop_id, parent_station FROM stops WHERE stop_id = ?').all(stopId);
+
+  // Eingabe immer mitfuehren, auch wenn sie in stops nicht auftaucht.
+  const ids = new Set([stopId]);
+  for (const s of seeds) ids.add(s.stop_id);
+
+  const childStmt = d.prepare(`
+    SELECT stop_id FROM stops
+    WHERE parent_station = ?
+       OR parent_station = ('Parent' || ?)
+       OR stop_id LIKE (? || ':%')
+  `);
+  const siblingStmt = d.prepare('SELECT stop_id FROM stops WHERE parent_station = ?');
+
+  for (const seed of seeds) {
+    for (const r of childStmt.all(seed.stop_id, seed.stop_id, seed.stop_id)) ids.add(r.stop_id);
+    if (seed.parent_station) {
+      for (const r of siblingStmt.all(seed.parent_station)) ids.add(r.stop_id);
+    }
+  }
+
+  return [...ids];
+}
+
 /** Holt Metadaten aus der _meta-Tabelle */
 function getMeta() {
   const d = getDb();
@@ -188,21 +238,7 @@ function createMcpServer() {
       });
       const startTime = time_from || nowSwiss;
 
-      // Schweizer GTFS Stop-ID Aufloesung:
-      // Parent8503000 = Eltern-Station, 8503000 = Station, 8503000:0:1 = Gleis
-      // Wir muessen alle verwandten Stops finden, egal welche ID uebergeben wird.
-      const relatedStops = d.prepare(`
-        SELECT DISTINCT stop_id FROM stops
-        WHERE stop_id = ?
-           OR parent_station = ?
-           OR parent_station = ('Parent' || ?)
-           OR stop_id LIKE (? || ':%')
-           OR parent_station = (SELECT parent_station FROM stops WHERE stop_id = ? AND parent_station IS NOT NULL AND parent_station != '')
-      `).all(stop_id, stop_id, stop_id, stop_id, stop_id).map(r => r.stop_id);
-
-      // Original stop_id immer einschliessen
-      if (!relatedStops.includes(stop_id)) relatedStops.push(stop_id);
-
+      const relatedStops = resolveRelatedStops(d, stop_id);
       const stopPlaceholders = relatedStops.map(() => '?').join(',');
 
       const results = d.prepare(`

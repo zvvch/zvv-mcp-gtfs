@@ -35,11 +35,17 @@ const GTFS_TABLES = {
       parent_station: 'TEXT',
       stop_timezone: 'TEXT',
       wheelchair_boarding: 'INTEGER',
-      platform_code: 'TEXT'
+      platform_code: 'TEXT',
+      // Seit Feed 2026-07 nutzen die Schweizer Haltestellen SLOID-Kennungen
+      // (ch:1:sloid:3000) statt der alten DIDOK-Nummern (8503000). Die alte
+      // Nummer steht weiterhin hier drin -- ohne sie waere jede bekannte
+      // Haltestellen-ID von heute auf morgen wertlos.
+      original_stop_id: 'TEXT'
     },
     indexes: [
       'CREATE INDEX IF NOT EXISTS idx_stops_name ON stops(stop_name)',
-      'CREATE INDEX IF NOT EXISTS idx_stops_parent ON stops(parent_station)'
+      'CREATE INDEX IF NOT EXISTS idx_stops_parent ON stops(parent_station)',
+      'CREATE INDEX IF NOT EXISTS idx_stops_original ON stops(original_stop_id)'
     ]
   },
   routes: {
@@ -289,9 +295,15 @@ async function importTable(db, tableName, tableDef, gtfsDir) {
     rowCount += batch.length;
   }
 
-  // Indexe erstellen
+  // Indexe erstellen. Die Tabelle enthaelt nur Spalten, die der Feed auch
+  // liefert -- ein Index auf eine optionale Spalte (z.B. original_stop_id)
+  // darf den gesamten Import nicht scheitern lassen.
   for (const idx of tableDef.indexes) {
-    db.exec(idx);
+    try {
+      db.exec(idx);
+    } catch (err) {
+      console.log(`  Index uebersprungen (${err.message})`);
+    }
   }
 
   process.stdout.write(`\r  ${tableName}: ${rowCount.toLocaleString()} Zeilen importiert\n`);
