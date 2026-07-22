@@ -16,7 +16,8 @@ services:
     ports:
       # Bewusst nur auf Loopback. Von aussen erreichbar wird der Dienst
       # ausschliesslich ueber den Cloudflare-Tunnel.
-      - "127.0.0.1:3000:3000"
+      # HOST_PORT ist ueberschreibbar, falls 3000 auf dem Host schon belegt ist.
+      - "127.0.0.1:${HOST_PORT:-3000}:3000"
 
   # Cloudflare-Bridge. Startet nur mit: docker compose --profile tunnel up -d
   cloudflared:
@@ -33,3 +34,6 @@ services:
 
 volumes:
   gtfs-data:
+    # Fester Name statt Projekt-Praefix: die 5.3-GB-Datenbank soll ein
+    # Umbenennen des Verzeichnisses oder des Compose-Projekts ueberleben.
+    name: zvv-gtfs-data

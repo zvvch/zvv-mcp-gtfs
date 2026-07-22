@@ -50,7 +50,9 @@ Danach erreichbar unter:
 | MCP Endpoint | `POST http://localhost:3000/mcp` |
 | Health Check | `GET http://localhost:3000/health` |
 
-Der Port ist bewusst nur auf `127.0.0.1` gebunden. Von aussen erreichbar wird der Dienst ausschliesslich über den Tunnel.
+Der Port ist bewusst nur auf `127.0.0.1` gebunden. Von aussen erreichbar wird der Dienst ausschliesslich über den Tunnel. Ist 3000 auf dem Host schon belegt, `HOST_PORT` in `.env` setzen.
+
+Die Datenbank liegt im Volume `zvv-gtfs-data` mit festem Namen -- sie überlebt damit ein Umbenennen des Verzeichnisses oder des Compose-Projekts.
 
 ## Nach aussen teilen: Cloudflare-Bridge
 
@@ -136,7 +138,8 @@ Die Web-UI fragt bei der ersten 401-Antwort danach und merkt es sich im Browser.
 | `TUNNEL_TOKEN` | -- | Cloudflare-Tunnel-Token. Nur für `--profile tunnel`. |
 | `GTFS_AUTO_UPDATE` | `true` | Fahrplan selbstständig aktuell halten. `false` = nur melden. |
 | `GTFS_UPDATE_INTERVAL_HOURS` | `24` | Abstand zwischen zwei Update-Prüfungen. |
-| `PORT` | `3000` | Port des HTTP-Servers. |
+| `HOST_PORT` | `3000` | Host-Port (an `127.0.0.1` gebunden). Anpassen, falls 3000 belegt ist. |
+| `PORT` | `3000` | Port des HTTP-Servers im Container. |
 | `GTFS_DB_PATH` | `zvv-data/gtfs.db` | Pfad zur SQLite-Datenbank. |
 
 ## Fahrplan-Updates
