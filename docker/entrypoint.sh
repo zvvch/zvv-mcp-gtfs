@@ -16,6 +16,22 @@ SENTINEL="$DATA_DIR/.build-complete"
 
 log() { echo "[entrypoint] $*"; }
 
+# Selbstheilung: Stirbt der Container waehrend des atomaren Update-Schwenks
+# genau zwischen den Renames, kann die produktive gtfs.db fehlen, waehrend das
+# Sentinel noch gesetzt ist -- der Server kaeme dann ohne Daten hoch.
+if [ -f "$SENTINEL" ] && [ ! -f "$DB" ]; then
+  if [ -f "$DB.old" ]; then
+    # Schneller Weg: promoteStaging hatte die alte DB nach .old gesichert.
+    log "gtfs.db fehlt, aber Sicherung gtfs.db.old vorhanden — stelle sie wieder her."
+    mv "$DB.old" "$DB"
+    rm -f "$DB.old-wal" "$DB.old-shm"
+  else
+    # Letzter Ausweg: sauberer Neuaufbau.
+    log "Sentinel gesetzt, aber gtfs.db fehlt (Absturz im Update-Fenster?) — baue neu auf."
+    rm -f "$SENTINEL"
+  fi
+fi
+
 if [ ! -f "$SENTINEL" ]; then
   log "Keine vollstaendige Datenbank gefunden — Erstaufbau startet."
   log "Quelle: opentransportdata.swiss (~2 GB entpackt, Ergebnis ~5.3 GB)"

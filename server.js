@@ -43,13 +43,21 @@ function closeDb() {
       // Handle war bereits zu -- nicht weiter tragisch
     }
     db = null;
+    statsCache = null; // Zaehler gelten nur fuer die alte Datei
   }
 }
 
 // --- Hilfsfunktionen ---
 
-/** Gibt DB-Statistiken zurück */
+// Die Datenbank ist readonly; die Zeilenzahlen aendern sich nur beim
+// Update-Schwenk (der closeDb aufruft). Ohne Cache wuerde jeder /health-
+// Aufruf -- inkl. des Docker-Healthchecks alle 30 s -- volle COUNT(*)-Scans
+// ueber 40 Mio. Zeilen ausloesen. Ein unauth. Poller waere ein DoS-Verstaerker.
+let statsCache = null;
+
+/** Gibt DB-Statistiken zurück (gecacht bis zum naechsten DB-Schwenk) */
 function getDbStats() {
+  if (statsCache) return statsCache;
   const d = getDb();
   const tables = d.prepare(
     "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite_%'"
@@ -60,6 +68,7 @@ function getDbStats() {
     const row = d.prepare(`SELECT COUNT(*) as count FROM "${name}"`).get();
     stats[name] = row.count;
   }
+  statsCache = stats;
   return stats;
 }
 
