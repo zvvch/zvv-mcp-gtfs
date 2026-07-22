@@ -18,8 +18,8 @@ log() { echo "[entrypoint] $*"; }
 
 if [ ! -f "$SENTINEL" ]; then
   log "Keine vollstaendige Datenbank gefunden — Erstaufbau startet."
-  log "Quelle: opentransportdata.swiss (~2 GB entpackt, Ergebnis ~3.8 GB)"
-  log "Dauer: ungefaehr 10 Minuten. Der Server startet danach automatisch."
+  log "Quelle: opentransportdata.swiss (~2 GB entpackt, Ergebnis ~5.3 GB)"
+  log "Dauer: 10 bis 15 Minuten. Der Server startet danach automatisch."
 
   rm -f "$DB" "$DB-wal" "$DB-shm"
 

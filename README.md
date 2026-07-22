@@ -32,7 +32,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2 GB), 32 Mio. Zeilen nach SQLite importieren (~3.8 GB). Das dauert **etwa 10 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `gtfs-data` und überleben Updates und Neustarts.
+Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **etwa 10 bis 15 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `gtfs-data` und überleben Updates und Neustarts.
 
 Fortschritt mitlesen:
 
@@ -76,7 +76,7 @@ Ohne `--profile tunnel` läuft der Server rein lokal, der Tunnel-Container start
 
 `MCP_AUTH_TOKEN` schützt `/mcp` und `/api/query` per `Authorization: Bearer <token>`. `/health` bleibt offen, damit Healthcheck und Cloudflare-Origin-Prüfung funktionieren.
 
-**Sobald der Tunnel aktiv ist, ist das Token Pflicht.** Ohne Token wäre `/api/query` ein unauthentifizierter SQL-Endpunkt auf einer Tabelle mit 22 Mio. Zeilen -- ein Aggregat über einen Self-Join bindet die Maschine, und zwar von jedem beliebigen Absender aus. Der Server warnt beim Start, wenn kein Token gesetzt ist.
+**Sobald der Tunnel aktiv ist, ist das Token Pflicht.** Ohne Token wäre `/api/query` ein unauthentifizierter SQL-Endpunkt auf einer Tabelle mit 28 Mio. Zeilen -- ein Aggregat über einen Self-Join bindet die Maschine, und zwar von jedem beliebigen Absender aus. Der Server warnt beim Start, wenn kein Token gesetzt ist.
 
 Clients senden das Token als Header:
 
@@ -146,7 +146,7 @@ opentransportdata.swiss veröffentlicht mehrmals im Jahr einen neuen Fahrplan. D
 Das hat zwei Konsequenzen, die beide beabsichtigt sind:
 
 - **Ein fehlgeschlagenes Update kostet nichts.** Bricht der Download ab oder scheitert der Import, bleibt der bisherige Fahrplan unangetastet in Betrieb. Der Server beantwortet die ganze Zeit über Anfragen.
-- **Es braucht kurzzeitig doppelten Plattenplatz** (~8 GB statt ~4 GB), solange Staging und Produktivstand nebeneinander liegen.
+- **Es braucht kurzzeitig doppelten Plattenplatz** (~11 GB statt ~5.5 GB), solange Staging und Produktivstand nebeneinander liegen.
 
 Der aktuelle Stand steht unter `/health` im Feld `update`.
 
