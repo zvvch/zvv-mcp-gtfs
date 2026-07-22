@@ -7,13 +7,20 @@
 node_modules
 npm-debug.log
 
-# GTFS-Rohdaten und DB (werden im Container neu erzeugt)
-zvv-data/gtfs/*.txt
-zvv-data/gtfs/*.zip
-zvv-data/*.db
+# GTFS-Rohdaten und DB — werden zur Laufzeit im Volume erzeugt,
+# duerfen niemals in den Build-Kontext (2 GB + 3.8 GB).
+zvv-data/
 
 # Tests
 test/
+
+# Nicht im Image benoetigt
+.github/
+.env
+.env.*
+!.env.example
+docker-compose.yml
+*.md
 
 # IDE
 .vscode
@@ -22,6 +29,3 @@ test/
 # OS
 .DS_Store
 Thumbs.db
-
-# Vercel
-.vercel

@@ -1,11 +1,35 @@
-version: '3.8'
+name: zvv-mcp-gtfs
 
 services:
-  mcp-gtfs:
+  gtfs:
+    image: ghcr.io/zvvch/zvv-mcp-gtfs:latest
+    # Lokal bauen statt ziehen: docker compose build
     build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - PORT=3000
     restart: unless-stopped
+    environment:
+      # Ohne Token sind /mcp und /api/query offen — das ist nur fuer
+      # rein lokalen Betrieb ohne Tunnel vertretbar.
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      GTFS_AUTO_UPDATE: ${GTFS_AUTO_UPDATE:-true}
+    volumes:
+      - gtfs-data:/app/zvv-data
+    ports:
+      # Bewusst nur auf Loopback. Von aussen erreichbar wird der Dienst
+      # ausschliesslich ueber den Cloudflare-Tunnel.
+      - "127.0.0.1:3000:3000"
+
+  # Cloudflare-Bridge. Startet nur mit: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Kein ":?"-Guard: Compose interpoliert die Datei vor der Profil-Auswahl,
+      # ein Pflichtwert hier wuerde auch den profillosen Standardstart brechen.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - gtfs
+
+volumes:
+  gtfs-data:

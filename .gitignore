@@ -10,6 +10,11 @@ test/test-gtfs.db
 test/*.db-wal
 test/*.db-shm
 
+# Secrets (Tunnel-Token, Auth-Token)
+.env
+.env.*
+!.env.example
+
 # Node.js
 node_modules/
 npm-debug.log*

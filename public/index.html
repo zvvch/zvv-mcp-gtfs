@@ -1281,8 +1281,8 @@ fetch('/api/query', {
               </div>
               <table>
                 <tr><th>Komponente</th><th>Technologie</th></tr>
-                <tr><td>Runtime</td><td>Node.js &ge; 18</td></tr>
-                <tr><td>HTTP Server</td><td>Express.js 4.x</td></tr>
+                <tr><td>Runtime</td><td>Node.js &ge; 20</td></tr>
+                <tr><td>HTTP Server</td><td>Express.js 5.x</td></tr>
                 <tr><td>MCP SDK</td><td>@modelcontextprotocol/sdk 1.x (StreamableHTTP)</td></tr>
                 <tr><td>Datenbank</td><td>SQLite via better-sqlite3 (synchron, nativ)</td></tr>
                 <tr><td>GTFS Parser</td><td>Eigener CSV-Parser (zeilenweise, memory-effizient)</td></tr>
@@ -1355,45 +1355,37 @@ fetch('/api/query', {
     });
 
     // --- API Helper ---
-    async function callTool(name, args = {}) {
-      const res = await fetch('/mcp', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/event-stream'
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: Date.now(),
-          method: 'initialize',
-          params: {
-            protocolVersion: '2025-03-26',
-            capabilities: {},
-            clientInfo: { name: 'gtfs-explorer', version: '1.0.0' }
-          }
-        })
-      });
-      // For the frontend, use the REST-like query endpoint instead
-      const r = await fetch(`/api/tool/${name}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(args)
-      });
-      return r.json();
+    // Nur noetig, wenn der Server mit gesetztem MCP_AUTH_TOKEN laeuft.
+    let apiToken = localStorage.getItem('gtfs_token') || '';
+
+    function authHeaders(base = {}) {
+      return apiToken ? { ...base, 'Authorization': `Bearer ${apiToken}` } : base;
     }
 
-    // Use simpler REST API calls
+    // Bei 401 einmalig nach dem Token fragen und die Anfrage wiederholen.
+    async function withAuthRetry(doFetch) {
+      const res = await doFetch();
+      if (res.status !== 401) return res;
+
+      const entered = prompt('Dieser Server ist token-geschützt.\nMCP_AUTH_TOKEN eingeben:', '');
+      if (!entered) return res;
+
+      apiToken = entered.trim();
+      localStorage.setItem('gtfs_token', apiToken);
+      return doFetch();
+    }
+
     async function apiCall(endpoint) {
-      const res = await fetch(endpoint);
+      const res = await withAuthRetry(() => fetch(endpoint, { headers: authHeaders() }));
       return res.json();
     }
 
     async function apiPost(endpoint, body) {
-      const res = await fetch(endpoint, {
+      const res = await withAuthRetry(() => fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify(body)
-      });
+      }));
       return res.json();
     }
 
@@ -2052,7 +2044,7 @@ fetch('/api/query', {
             <p><strong>GTFS-Datei:</strong> ${data.database?.gtfs_filename || '-'}</p>
             <p><strong>Heruntergeladen:</strong> ${data.database?.gtfs_downloaded_at ? new Date(data.database.gtfs_downloaded_at).toLocaleString('de-CH') : '-'}</p>
             <p><strong>Importiert:</strong> ${data.database?.imported_at ? new Date(data.database.imported_at).toLocaleString('de-CH') : '-'}</p>
-            <p><strong>Datenbank:</strong> ${data.database?.path || '-'}</p>
+            <p><strong>Fahrplan:</strong> ${data.database?.gtfs_filename || '-'}</p>
             <p><strong>Quelle:</strong> <a href="https://data.opentransportdata.swiss/de/dataset/timetable-2026-gtfs2020" target="_blank" rel="noopener" style="color:var(--accent)">opentransportdata.swiss</a> (Updates Di/Fr)</p>
           </div>`;
       } catch (err) {

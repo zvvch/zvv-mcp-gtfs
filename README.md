@@ -6,46 +6,88 @@ MCP Server für Schweizer ÖV-Fahrplandaten (GTFS) -- abfragbar via AI/LLM-Syste
 
 Dieses Projekt stellt die offiziellen **GTFS-Fahrplandaten** der Schweiz (via [opentransportdata.swiss](https://data.opentransportdata.swiss)) über das **Model Context Protocol (MCP)** bereit. AI-Systeme können darüber strukturiert Haltestellen suchen, Abfahrten abfragen und Fahrpläne analysieren.
 
+Der Server läuft als Container auf beliebiger Hardware. Die Fahrplandaten werden beim ersten Start selbst aufgebaut -- es muss nichts vorbereitet oder mitgeliefert werden.
+
 ## Architektur
 
 ```mermaid
 flowchart TD
     GTFS["opentransportdata.swiss<br/>GTFS ZIP"] -->|download-gtfs.js| CSV["CSV-Dateien<br/>10 GTFS-Tabellen"]
-    CSV -->|import-gtfs.js| DB["SQLite DB<br/>zvv-gtfs.db"]
-    DB --> MCP["MCP Server<br/>@modelcontextprotocol/sdk"]
-    MCP -->|StreamableHTTP| Client["AI/LLM Client<br/>Claude, ChatGPT, etc."]
+    CSV -->|import-gtfs.js| DB["SQLite DB<br/>Volume: /app/zvv-data"]
+    DB --> MCP["MCP Server<br/>Express + SDK"]
+    MCP -->|StreamableHTTP| Local["Lokaler Client<br/>127.0.0.1:3000"]
+    MCP -.->|optional| CF["cloudflared<br/>Tunnel"]
+    CF -.-> Remote["Externer Client<br/>https://…"]
 ```
-
-## Features
-
-- 6 MCP-Tools für strukturierte GTFS-Abfragen
-- SQLite-Datenbank mit allen 10 GTFS-Tabellen + Indexen
-- Automatischer Download der neuesten Fahrplandaten
-- StreamableHTTP-Transport (MCP-Standard)
-- Vercel- und Docker-Deployment
 
 ## Quick Start
 
-### Voraussetzungen
-
-- Node.js >= 18
-
-### Installation & Start
+Voraussetzung: Docker mit Compose-Plugin. Sonst nichts.
 
 ```bash
-# Dependencies installieren
-npm install
+git clone https://github.com/zvvch/zvv-mcp-gtfs.git
+cd zvv-mcp-gtfs
+cp .env.example .env
 
-# GTFS-Daten herunterladen und in SQLite importieren
-npm run build
-
-# Server starten
-npm start
+docker compose up -d
 ```
 
-Der Server ist dann erreichbar:
-- **MCP Endpoint:** `POST http://localhost:3000/mcp`
-- **Health Check:** `GET http://localhost:3000/health`
+Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2 GB), 32 Mio. Zeilen nach SQLite importieren (~3.8 GB). Das dauert **etwa 10 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `gtfs-data` und überleben Updates und Neustarts.
+
+Fortschritt mitlesen:
+
+```bash
+docker compose logs -f gtfs
+```
+
+Danach erreichbar unter:
+
+| | |
+|---|---|
+| Web-UI | `http://localhost:3000` |
+| MCP Endpoint | `POST http://localhost:3000/mcp` |
+| Health Check | `GET http://localhost:3000/health` |
+
+Der Port ist bewusst nur auf `127.0.0.1` gebunden. Von aussen erreichbar wird der Dienst ausschliesslich über den Tunnel.
+
+## Nach aussen teilen: Cloudflare-Bridge
+
+Damit läuft der Server weiter lokal, ist aber unter einem festen Hostnamen erreichbar -- ohne Portfreigabe, ohne feste IP, auch hinter NAT.
+
+1. **Tunnel anlegen:** [one.dash.cloudflare.com](https://one.dash.cloudflare.com/) → Networks → Tunnels → Create a tunnel → Cloudflared
+2. **Public Hostname** im Tunnel konfigurieren: Service `HTTP` → URL `gtfs:3000`
+   (`gtfs` ist der Compose-Servicename, cloudflared erreicht ihn über das interne Netz)
+3. **Token und Zugriffstoken** in `.env` eintragen:
+
+```bash
+TUNNEL_TOKEN=eyJ...
+MCP_AUTH_TOKEN=$(openssl rand -hex 32)
+```
+
+4. **Mit Bridge starten:**
+
+```bash
+docker compose --profile tunnel up -d
+```
+
+Ohne `--profile tunnel` läuft der Server rein lokal, der Tunnel-Container startet gar nicht.
+
+## Zugriffsschutz
+
+`MCP_AUTH_TOKEN` schützt `/mcp` und `/api/query` per `Authorization: Bearer <token>`. `/health` bleibt offen, damit Healthcheck und Cloudflare-Origin-Prüfung funktionieren.
+
+**Sobald der Tunnel aktiv ist, ist das Token Pflicht.** Ohne Token wäre `/api/query` ein unauthentifizierter SQL-Endpunkt auf einer Tabelle mit 22 Mio. Zeilen -- ein Aggregat über einen Self-Join bindet die Maschine, und zwar von jedem beliebigen Absender aus. Der Server warnt beim Start, wenn kein Token gesetzt ist.
+
+Clients senden das Token als Header:
+
+```bash
+curl -X POST https://dein-host/api/query \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"sql":"SELECT stop_name FROM stops LIMIT 5"}'
+```
+
+Die Web-UI fragt bei der ersten 401-Antwort danach und merkt es sich im Browser.
 
 ## MCP-Tools
 
@@ -75,24 +117,65 @@ Der Server ist dann erreichbar:
 - `gtfs://status` -- Aktueller Daten-Status (Download-Datum, Version)
 - `gtfs://schema` -- Datenbankschema aller Tabellen
 
+## HTTP-Endpoints
+
+| Endpoint | Methode | Auth | Beschreibung |
+|----------|---------|------|--------------|
+| `/` | GET | -- | Web-UI (GTFS Explorer) |
+| `/health` | GET | -- | Serverstatus, Tabellenstatistiken |
+| `/mcp` | POST | Token | MCP StreamableHTTP Endpoint |
+| `/api/query` | POST | Token | SQL-Abfrage für die Web-UI |
+
+## Konfiguration
+
+| Variable | Default | Beschreibung |
+|----------|---------|--------------|
+| `MCP_AUTH_TOKEN` | -- | Bearer-Token für `/mcp` und `/api/query`. Leer = offen. |
+| `TUNNEL_TOKEN` | -- | Cloudflare-Tunnel-Token. Nur für `--profile tunnel`. |
+| `GTFS_AUTO_UPDATE` | `true` | Bei jedem Start auf neuen Fahrplan prüfen. |
+| `PORT` | `3000` | Port des HTTP-Servers. |
+| `GTFS_DB_PATH` | `zvv-data/gtfs.db` | Pfad zur SQLite-Datenbank. |
+
+## Fahrplan-Updates
+
+opentransportdata.swiss veröffentlicht regelmässig neue Fahrpläne. Mit `GTFS_AUTO_UPDATE=true` prüft der Container bei jedem Start und baut bei Bedarf neu auf.
+
+Manuell:
+
+```bash
+docker compose exec gtfs node check-update.js --check   # nur prüfen
+docker compose restart gtfs                             # Update anwenden
+```
+
+## Lokal ohne Docker (Entwicklung)
+
+```bash
+npm install
+npm run build     # GTFS herunterladen + nach SQLite importieren (~10 Min)
+npm start
+```
+
+Node.js >= 20 erforderlich (`better-sqlite3` 12 kompiliert nativ).
+
 ## Projektstruktur
 
 ```
-mcp-gtfs/
-├── server.js           # MCP Server (Express + @modelcontextprotocol/sdk)
-├── download-gtfs.js    # GTFS-Daten von opentransportdata.swiss herunterladen
-├── import-gtfs.js      # GTFS CSV → SQLite Konverter
-├── api/
-│   └── mcp.js          # Vercel Serverless Function Entry Point
+zvv-mcp-gtfs/
+├── server.js             # MCP Server (Express 5 + @modelcontextprotocol/sdk)
+├── download-gtfs.js      # GTFS-Daten von opentransportdata.swiss herunterladen
+├── import-gtfs.js        # GTFS CSV → SQLite Konverter
+├── check-update.js       # Prüft auf neuen Fahrplan
+├── docker/
+│   └── entrypoint.sh     # Baut die DB beim ersten Start auf
+├── public/
+│   └── index.html        # Web-UI (GTFS Explorer)
 ├── test/
-│   ├── smoke.test.js   # Smoke Tests (30 Tests)
-│   └── fixtures/       # Test-Daten (Mini-GTFS)
-├── zvv-data/
-│   └── gtfs/           # GTFS-Rohdaten (nicht versioniert)
-├── package.json
-├── vercel.json         # Vercel-Konfiguration
-├── Dockerfile          # Docker-Image
-└── docker-compose.yml  # Docker Compose
+│   ├── smoke.test.js     # Smoke Tests (30 Tests)
+│   └── fixtures/         # Test-Daten (Mini-GTFS)
+├── zvv-data/             # Volume-Mountpoint (nicht versioniert)
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example
 ```
 
 ## Scripts
@@ -103,47 +186,27 @@ mcp-gtfs/
 | `npm run import` | GTFS CSV → SQLite importieren |
 | `npm run build` | Download + Import (komplett) |
 | `npm start` | MCP Server starten |
+| `npm run check-update` | Auf neuen Fahrplan prüfen |
 | `npm test` | Smoke Tests ausführen (30 Tests) |
-
-## Deployment
-
-### Vercel
-
-```bash
-# Vercel CLI installieren
-npm i -g vercel
-
-# Deployen
-vercel
-```
-
-Die `vercel.json` ist bereits konfiguriert. Im Build-Step werden die GTFS-Daten automatisch heruntergeladen und in SQLite importiert.
-
-### Docker
-
-```bash
-# Container bauen und starten
-docker-compose up --build
-
-# Oder im Hintergrund
-docker-compose up -d
-```
 
 ## GTFS-Datenquelle
 
-Die Fahrplandaten stammen von [opentransportdata.swiss](https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020) und enthalten den gesamten Schweizer ÖV-Fahrplan.
+Die Fahrplandaten stammen von [opentransportdata.swiss](https://data.opentransportdata.swiss/de/dataset/timetable-2026-gtfs2020) und enthalten den gesamten Schweizer ÖV-Fahrplan.
 
 **Enthaltene Tabellen:**
-- `agency` -- Verkehrsunternehmen (SBB, ZVV, PostAuto, etc.)
-- `stops` -- Haltestellen mit Koordinaten
-- `routes` -- Linien (Tram, Bus, S-Bahn, etc.)
-- `trips` -- Einzelne Fahrten
-- `stop_times` -- Haltestellenzeiten pro Fahrt
-- `calendar` -- Betriebstage
-- `calendar_dates` -- Ausnahmen (Feiertage etc.)
-- `feed_info` -- Metadaten zum Fahrplan
-- `transfers` -- Umsteigebeziehungen
-- `frequencies` -- Taktfahrten (start/end, Headway in Sekunden)
+
+| Tabelle | Inhalt |
+|---------|--------|
+| `agency` | Verkehrsunternehmen (SBB, VBZ, PostAuto, etc.) |
+| `stops` | Haltestellen mit Koordinaten |
+| `routes` | Linien (Tram, Bus, S-Bahn, etc.) |
+| `trips` | Einzelne Fahrten |
+| `stop_times` | Haltestellenzeiten pro Fahrt |
+| `calendar` | Betriebstage |
+| `calendar_dates` | Ausnahmen (Feiertage etc.) |
+| `feed_info` | Metadaten zum Fahrplan |
+| `transfers` | Umsteigebeziehungen |
+| `frequencies` | Taktfahrten (Headway in Sekunden) |
 
 ## Tests
 
@@ -161,5 +224,5 @@ npm test
 
 ## Lizenz & Quellen
 
-- GTFS-Daten: [opentransportdata.swiss -- Fahrplan 2025 (GTFS2020)](https://data.opentransportdata.swiss/de/dataset/timetable-2025-gtfs2020)
+- GTFS-Daten: [opentransportdata.swiss -- Fahrplan 2026 (GTFS2020)](https://data.opentransportdata.swiss/de/dataset/timetable-2026-gtfs2020)
 - MCP SDK: [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk)

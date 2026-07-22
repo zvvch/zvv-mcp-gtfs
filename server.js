@@ -5,10 +5,15 @@ const { z } = require('zod');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 
 // --- Konfiguration ---
 const PORT = parseInt(process.env.PORT, 10) || 3000;
 const DB_PATH = process.env.GTFS_DB_PATH || path.join(__dirname, 'zvv-data', 'gtfs.db');
+// Ohne Token bleiben /mcp und /api/query offen. Das ist nur fuer rein
+// lokalen Betrieb vertretbar -- sobald der Dienst ueber einen Tunnel
+// erreichbar ist, muss MCP_AUTH_TOKEN gesetzt sein.
+const AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || '';
 
 // --- Datenbank ---
 let db;
@@ -322,7 +327,7 @@ function createMcpServer() {
   // 6. query_gtfs - Freie SQL-Abfrage (read-only, limitiert)
   server.tool(
     'query_gtfs',
-    'Führt eine freie SQL-Abfrage auf den GTFS-Daten aus. Nur SELECT erlaubt. Tabellen: agency, stops, routes, trips, stop_times, calendar, calendar_dates, feed_info, transfers.',
+    'Führt eine freie SQL-Abfrage auf den GTFS-Daten aus. Nur SELECT erlaubt. Tabellen: agency, stops, routes, trips, stop_times, calendar, calendar_dates, feed_info, transfers, frequencies.',
     {
       sql: z.string().describe('SQL SELECT-Abfrage'),
       limit: z.number().int().min(1).max(1000).default(100).describe('Maximale Anzahl Ergebnisse')
@@ -454,6 +459,32 @@ function validateAndRunSQL(sql, limitDefault = 100) {
   return { count: results.length, results };
 }
 
+// --- Zugriffsschutz ---
+
+/** Vergleicht zwei Strings in konstanter Zeit */
+function safeEqual(a, b) {
+  const ba = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+/** Verlangt "Authorization: Bearer <MCP_AUTH_TOKEN>", sofern ein Token konfiguriert ist */
+function requireAuth(req, res, next) {
+  if (!AUTH_TOKEN) return next();
+
+  const header = req.get('authorization') || '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+
+  if (provided && safeEqual(provided, AUTH_TOKEN)) return next();
+
+  res.set('WWW-Authenticate', 'Bearer');
+  res.status(401).json({
+    error: 'Nicht autorisiert.',
+    hint: 'Header "Authorization: Bearer <MCP_AUTH_TOKEN>" erforderlich.'
+  });
+}
+
 // --- Express-App mit StreamableHTTP Transport ---
 function createApp() {
   const app = express();
@@ -471,7 +502,8 @@ function createApp() {
         server: 'ZVV GTFS MCP Server',
         version: '2.0.0',
         database: {
-          path: DB_PATH,
+          // Absoluter Pfad bewusst nicht im Response -- /health ist auch
+          // dann offen, wenn der Rest per Token geschuetzt ist.
           exists: fs.existsSync(DB_PATH),
           ...meta,
           tables: stats
@@ -487,7 +519,7 @@ function createApp() {
   });
 
   // MCP StreamableHTTP Endpoint
-  app.post('/mcp', async (req, res) => {
+  app.post('/mcp', requireAuth, async (req, res) => {
     try {
       const server = createMcpServer();
       const transport = new StreamableHTTPServerTransport({
@@ -522,7 +554,7 @@ function createApp() {
   });
 
   // REST API für Frontend - SQL-Query Endpoint
-  app.post('/api/query', express.json(), (req, res) => {
+  app.post('/api/query', requireAuth, express.json(), (req, res) => {
     try {
       const { sql, limit } = req.body || {};
       if (!sql) {
@@ -591,6 +623,14 @@ if (require.main === module) {
     console.log(`  MCP Endpoint:  http://localhost:${PORT}/mcp`);
     console.log(`  Health Check:  http://localhost:${PORT}/health`);
     console.log(`  Datenbank:     ${DB_PATH}`);
+
+    if (AUTH_TOKEN) {
+      console.log(`  Zugriff:       Token-geschuetzt (MCP_AUTH_TOKEN)`);
+    } else {
+      console.log(`\n  ⚠  MCP_AUTH_TOKEN ist nicht gesetzt.`);
+      console.log(`     /mcp und /api/query sind ohne Authentifizierung erreichbar.`);
+      console.log(`     Fuer oeffentliche Erreichbarkeit (z.B. Cloudflare-Tunnel) zwingend setzen.\n`);
+    }
 
     // Async Update-Check im Hintergrund (blockiert Server-Start nicht)
     checkGtfsUpdateOnStartup();
