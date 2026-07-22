@@ -32,6 +32,8 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> **Hinweis zum Image:** Solange das GHCR-Paket auf privat steht, schlägt der Pull ohne Anmeldung fehl. Entweder einmalig `docker login ghcr.io`, oder das Paket unter *GitHub → Packages → zvv-mcp-gtfs → Package settings → Change visibility* öffentlich schalten. Alternativ baut `docker compose build` das Image lokal aus dem Repo -- dafür braucht es keine Registry.
+
 Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **etwa 10 bis 15 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `gtfs-data` und überleben Updates und Neustarts.
 
 Fortschritt mitlesen:
