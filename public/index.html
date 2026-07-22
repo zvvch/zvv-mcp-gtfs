@@ -1794,10 +1794,18 @@ fetch('/api/query', {
       }
     }
 
+    // Alte DIDOK-Nummer (85xxxxx) auf die heutige SLOID uebersetzen -- der
+    // Feed kennt seit 2026-07 nur noch SLOIDs. Ohne das liefert die bekannte
+    // Nummer 8503000 hier "Keine Abfahrten gefunden".
+    function didokToSloid(id) {
+      return /^85\d{5}$/.test(id) ? 'ch:1:sloid:' + parseInt(id.slice(2), 10) : id;
+    }
+
     // --- Abfahrten ---
     async function getDepartures() {
-      const stopId = document.getElementById('dep-stop-id').value.trim();
-      if (!stopId) return;
+      const rawId = document.getElementById('dep-stop-id').value.trim();
+      if (!rawId) return;
+      const stopId = didokToSloid(rawId);
       const dateInput = document.getElementById('dep-date').value;
       const timeInput = document.getElementById('dep-time').value;
       const date = dateInput ? dateInput.replace(/-/g, '') : new Date().toISOString().slice(0, 10).replace(/-/g, '');

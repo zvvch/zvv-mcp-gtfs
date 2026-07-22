@@ -316,38 +316,183 @@ describe('MCP Tools (Direkt-Tests)', () => {
 });
 
 // ============================================================
-// 5. Security Tests
+// 5. Security Tests -- gegen die ECHTE Guard-Funktion, nicht gegen
+//    eine im Test nachgebaute Regex.
 // ============================================================
-describe('Security', () => {
-  it('sollte SQL-Injection via DROP TABLE blocken', () => {
-    const normalized = 'SELECT * FROM stops; DROP TABLE stops'.trim().replace(/\s+/g, ' ').toUpperCase();
-    const hasDrop = /\bDROP\b/.test(normalized);
-    assert.ok(hasDrop, 'DROP wurde nicht erkannt');
+describe('Security (validateAndRunSQL)', () => {
+  let validateAndRunSQL;
+
+  before(async () => {
+    if (!fs.existsSync(TEST_DB_PATH)) {
+      const { importGTFS } = require('../import-gtfs.js');
+      await importGTFS(TEST_DB_PATH, FIXTURES_DIR);
+    }
+    process.env.GTFS_DB_PATH = TEST_DB_PATH;
+    delete require.cache[require.resolve('../server.js')];
+    ({ validateAndRunSQL } = require('../server.js'));
   });
 
-  it('sollte DELETE-Statements blocken', () => {
-    const normalized = 'DELETE FROM stops WHERE 1=1'.trim().replace(/\s+/g, ' ').toUpperCase();
-    const hasDelete = /\bDELETE\b/.test(normalized);
-    assert.ok(hasDelete, 'DELETE wurde nicht erkannt');
+  after(() => {
+    delete process.env.GTFS_DB_PATH;
+    delete require.cache[require.resolve('../server.js')];
   });
 
-  it('sollte INSERT-Statements blocken', () => {
-    const normalized = "INSERT INTO stops VALUES ('hack')".trim().replace(/\s+/g, ' ').toUpperCase();
-    const hasInsert = /\bINSERT\b/.test(normalized);
-    assert.ok(hasInsert, 'INSERT wurde nicht erkannt');
+  for (const kw of ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'ATTACH', 'PRAGMA']) {
+    it(`sollte ${kw} blocken`, () => {
+      const r = validateAndRunSQL(`${kw} something evil`, 10);
+      assert.ok(r.error, `${kw} haette blockiert werden muessen`);
+    });
+  }
+
+  it('sollte gültige SELECT-Queries ausführen', () => {
+    const r = validateAndRunSQL('SELECT stop_name FROM stops', 5);
+    assert.ok(!r.error, r.error);
+    assert.ok(r.count > 0, 'SELECT sollte Zeilen liefern');
   });
 
-  it('sollte ATTACH DATABASE blocken', () => {
-    const normalized = "ATTACH DATABASE '/etc/passwd' AS hack".trim().replace(/\s+/g, ' ').toUpperCase();
-    const hasAttach = /\bATTACH\b/.test(normalized);
-    assert.ok(hasAttach, 'ATTACH wurde nicht erkannt');
+  it('sollte WITH...SELECT (CTE) erlauben', () => {
+    const r = validateAndRunSQL('WITH x AS (SELECT 1 AS n) SELECT n FROM x', 5);
+    assert.ok(!r.error, r.error);
+    assert.equal(r.results[0].n, 1);
   });
 
-  it('sollte gültige SELECT-Queries erlauben', () => {
-    const normalized = 'SELECT stop_name FROM stops WHERE stop_id = ?'.trim().replace(/\s+/g, ' ').toUpperCase();
-    const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'ATTACH', 'DETACH', 'PRAGMA'];
-    const blocked = forbidden.some(kw => new RegExp(`\\b${kw}\\b`).test(normalized));
-    assert.ok(!blocked, 'Gültiges SELECT wurde blockiert');
+  it('sollte Keyword in String-Literal NICHT blocken (Falsch-Positiv)', () => {
+    const r = validateAndRunSQL("SELECT stop_name FROM stops WHERE stop_name LIKE '%CREATE%'", 5);
+    assert.ok(!r.error, `Keyword im Literal wurde faelschlich blockiert: ${r.error}`);
+  });
+
+  it('sollte einen negativen limit nicht roh in die SQL lassen', () => {
+    const r = validateAndRunSQL('SELECT stop_id FROM stops', -1);
+    assert.ok(!r.error, r.error);
+    assert.ok(r.count >= 1 && r.count <= 1000, 'limit muss auf 1..1000 geklemmt werden');
+  });
+
+  it('sollte einen riesigen limit auf 1000 klemmen', () => {
+    const r = validateAndRunSQL('SELECT stop_id FROM stops', 99999999);
+    assert.ok(!r.error, r.error);
+    assert.ok(r.count <= 1000, 'limit-Kappung auf 1000 verletzt');
+  });
+});
+
+// ============================================================
+// 5b. Reine Hilfsfunktionen (GTFS-Zeit, DIDOK, route_type)
+// ============================================================
+describe('Hilfsfunktionen', () => {
+  let S;
+  before(() => {
+    delete require.cache[require.resolve('../server.js')];
+    S = require('../server.js');
+  });
+  after(() => { delete require.cache[require.resolve('../server.js')]; });
+
+  it('didokToSloid übersetzt bekannte Bahnhöfe', () => {
+    assert.equal(S.didokToSloid('8503000'), 'ch:1:sloid:3000');  // Zürich HB
+    assert.equal(S.didokToSloid('8500010'), 'ch:1:sloid:10');    // Basel SBB
+    assert.equal(S.didokToSloid('8507000'), 'ch:1:sloid:7000');  // Bern
+  });
+
+  it('didokToSloid gibt null für Nicht-DIDOK zurück', () => {
+    assert.equal(S.didokToSloid('ch:1:sloid:3000'), null);
+    assert.equal(S.didokToSloid('9999999'), null);
+    assert.equal(S.didokToSloid('850300'), null);   // zu kurz
+  });
+
+  it('GTFS-Zeiten über 24:00 korrekt umrechnen', () => {
+    assert.equal(S.hmsToSec('24:30:00'), 88200);
+    assert.equal(S.shift24('00:30:00'), '24:30:00');
+    assert.equal(S.normalizeTime('24:30:00'), '00:30:00');
+    assert.equal(S.normalizeTime('25:10:00'), '01:10:00');
+    assert.equal(S.normalizeTime('13:04:00'), '13:04:00');  // unter 24 unverändert
+  });
+
+  it('prevYmd über Monatsgrenze', () => {
+    assert.equal(S.prevYmd('20260801'), '20260731');
+    assert.equal(S.prevYmd('20260101'), '20251231');
+  });
+
+  it('weekdayCol liefert die richtige Wochentagsspalte', () => {
+    assert.equal(S.weekdayCol('20260722'), 'wednesday');  // 22.07.2026 ist Mittwoch
+    assert.equal(S.weekdayCol('20260721'), 'tuesday');
+  });
+
+  it('HVT_RANGES bildet klassische Typen auf HVT-Bereiche ab', () => {
+    assert.deepEqual(S.HVT_RANGES[2], [100, 199]);   // Bahn
+    assert.deepEqual(S.HVT_RANGES[3], [700, 799]);   // Bus
+    assert.deepEqual(S.HVT_RANGES[0], [900, 999]);   // Tram
+  });
+});
+
+// ============================================================
+// 5c. Auth-Middleware -- gegen eine App MIT gesetztem Token.
+// ============================================================
+describe('Auth-Middleware', () => {
+  let server, baseUrl;
+  const TOKEN = 'test-secret-token-123';
+
+  before(async () => {
+    if (!fs.existsSync(TEST_DB_PATH)) {
+      const { importGTFS } = require('../import-gtfs.js');
+      await importGTFS(TEST_DB_PATH, FIXTURES_DIR);
+    }
+    process.env.GTFS_DB_PATH = TEST_DB_PATH;
+    process.env.MCP_AUTH_TOKEN = TOKEN;
+    delete require.cache[require.resolve('../server.js')];
+    const { createApp } = require('../server.js');
+    const app = createApp();
+    await new Promise(resolve => { server = app.listen(0, () => { baseUrl = `http://localhost:${server.address().port}`; resolve(); }); });
+  });
+
+  after(async () => {
+    if (server) await new Promise(resolve => server.close(resolve));
+    delete process.env.MCP_AUTH_TOKEN;
+    delete process.env.GTFS_DB_PATH;
+    delete require.cache[require.resolve('../server.js')];
+  });
+
+  function post(urlPath, body, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(urlPath, baseUrl);
+      const req = http.request({ method: 'POST', hostname: url.hostname, port: url.port, path: url.pathname,
+        headers: { 'Content-Type': 'application/json', ...headers } }, (res) => {
+        let data = ''; res.on('data', c => data += c);
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+      });
+      req.on('error', reject); req.write(JSON.stringify(body)); req.end();
+    });
+  }
+  function get(urlPath) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(urlPath, baseUrl);
+      http.get({ hostname: url.hostname, port: url.port, path: url.pathname }, (res) => {
+        let data = ''; res.on('data', c => data += c); res.on('end', () => resolve({ status: res.statusCode }));
+      }).on('error', reject);
+    });
+  }
+
+  it('/api/query ohne Token → 401', async () => {
+    const res = await post('/api/query', { sql: 'SELECT 1' });
+    assert.equal(res.status, 401);
+    assert.match(res.headers['www-authenticate'] || '', /Bearer/);
+  });
+
+  it('/api/query mit falschem Token → 401', async () => {
+    const res = await post('/api/query', { sql: 'SELECT 1' }, { Authorization: 'Bearer falsch' });
+    assert.equal(res.status, 401);
+  });
+
+  it('/api/query mit korrektem Token → 200', async () => {
+    const res = await post('/api/query', { sql: 'SELECT 1 AS n' }, { Authorization: `Bearer ${TOKEN}` });
+    assert.equal(res.status, 200);
+  });
+
+  it('/mcp ohne Token → 401', async () => {
+    const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json, text/event-stream' });
+    assert.equal(res.status, 401);
+  });
+
+  it('/health bleibt ohne Token offen → 200', async () => {
+    const res = await get('/health');
+    assert.equal(res.status, 200);
   });
 });
 

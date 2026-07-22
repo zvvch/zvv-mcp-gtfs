@@ -63,6 +63,72 @@ function getDbStats() {
   return stats;
 }
 
+// --- Zeit-Hilfsfunktionen fuer GTFS ---
+// GTFS-Zeiten koennen 24:00:00 ueberschreiten: ein Kurs, der um 00:30 des
+// Folgetags faehrt, gehoert zum Service-Tag davor und ist als "24:30:00"
+// kodiert. Ohne diese Behandlung fehlen alle Nachtkurse nach Mitternacht.
+
+/** "HH:MM:SS" -> Sekunden seit Betriebstag-Beginn (HH darf > 23 sein) */
+function hmsToSec(t) {
+  const m = /^(\d+):(\d{2}):(\d{2})$/.exec(t);
+  if (!m) return NaN;
+  return (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]);
+}
+
+/** Sekunden -> "HH:MM:SS" (immer zweistellige Stunde, kann > 23 sein) */
+function secToHms(s) {
+  const hh = Math.floor(s / 3600);
+  const mm = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+}
+
+/** Verschiebt eine Startzeit um 24 h nach vorne, fuer die Vortags-Abfrage */
+function shift24(t) {
+  const s = hmsToSec(t);
+  return Number.isNaN(s) ? t : secToHms(s + 24 * 3600);
+}
+
+/** Normalisiert eine >24h-Zeit auf die Wanduhr ("24:30:00" -> "00:30:00") */
+function normalizeTime(t) {
+  const s = hmsToSec(t);
+  if (Number.isNaN(s)) return t;
+  return secToHms(s % (24 * 3600));
+}
+
+/** Aktuelles Datum in der Zeitzone Europe/Zurich als YYYYMMDD */
+function swissDateYmd(now) {
+  // en-CA liefert YYYY-MM-DD; die Zeitzone bestimmt den Kalendertag.
+  return (now || new Date()).toLocaleDateString('en-CA', { timeZone: 'Europe/Zurich' }).replace(/-/g, '');
+}
+
+/** YYYYMMDD -> YYYYMMDD des Vortags */
+function prevYmd(ymd) {
+  const dt = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return dt.toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+/** Wochentag-Spalte (calendar) fuer ein YYYYMMDD */
+function weekdayCol(ymd) {
+  const cols = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dt = new Date(Date.UTC(+ymd.slice(0, 4), +ymd.slice(4, 6) - 1, +ymd.slice(6, 8)));
+  return cols[dt.getUTCDay()];
+}
+
+// Klassische GTFS-route_type-Werte (0-7) auf die erweiterten HVT-Bereiche
+// abbilden, die der Schweizer Feed tatsaechlich verwendet. Ohne das liefert
+// z.B. route_type=2 (Bahn) null Treffer, weil der Feed 100-199 nutzt.
+const HVT_RANGES = {
+  0: [900, 999],    // Tram
+  1: [400, 499],    // Metro / Stadtbahn
+  2: [100, 199],    // Bahn
+  3: [700, 799],    // Bus
+  4: [1000, 1099],  // Schiff / Faehre
+  6: [1300, 1399],  // Luftseilbahn / Gondel
+  7: [1400, 1499],  // Standseilbahn
+};
+
 // Aeltere Datenbanken kennen original_stop_id noch nicht.
 let originalColCache;
 function hasOriginalStopId(d) {
@@ -193,10 +259,10 @@ function createMcpServer() {
   // 2. get_routes - Linien abrufen
   server.tool(
     'get_routes',
-    'Gibt ÖV-Linien zurück. Optional filterbar nach Agentur oder Linientyp (0=Tram, 1=Metro, 2=Bahn, 3=Bus, 4=Fähre, 6=Gondel, 7=Standseilbahn).',
+    'Gibt ÖV-Linien zurück. Optional filterbar nach Agentur oder Linientyp. Für route_type sind sowohl die klassischen Werte (0=Tram, 1=Metro, 2=Bahn, 3=Bus, 4=Fähre, 6=Gondel, 7=Standseilbahn) als auch die erweiterten HVT-Werte des Schweizer Feeds (z.B. 700=Bus, 900=Tram, 100-199=Bahn) erlaubt; klassische Werte werden automatisch auf die HVT-Bereiche gemappt.',
     {
       agency_id: z.string().optional().describe('Filter nach Verkehrsunternehmen (agency_id)'),
-      route_type: z.number().int().optional().describe('Filter nach Linientyp (GTFS route_type)'),
+      route_type: z.number().int().optional().describe('Filter nach Linientyp (klassisch 0-7 oder erweitert/HVT)'),
       limit: z.number().int().min(1).max(500).default(50).describe('Maximale Anzahl Ergebnisse')
     },
     async ({ agency_id, route_type, limit }) => {
@@ -215,8 +281,15 @@ function createMcpServer() {
         params.push(agency_id);
       }
       if (route_type !== undefined) {
-        sql += ' AND r.route_type = ?';
-        params.push(route_type);
+        // Klassischen Wert (0-7) auf den HVT-Bereich abbilden, sonst exakt.
+        const range = HVT_RANGES[route_type];
+        if (range) {
+          sql += ' AND r.route_type BETWEEN ? AND ?';
+          params.push(range[0], range[1]);
+        } else {
+          sql += ' AND r.route_type = ?';
+          params.push(route_type);
+        }
       }
       sql += ' ORDER BY r.route_short_name LIMIT ?';
       params.push(limit);
@@ -247,21 +320,22 @@ function createMcpServer() {
     async ({ stop_id, date, time_from, limit }) => {
       const d = getDb();
 
-      // Aktives Datum bestimmen
-      const targetDate = date || new Date().toISOString().slice(0, 10).replace(/-/g, '');
-      const dayOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const dateObj = new Date(
-        parseInt(targetDate.slice(0, 4)),
-        parseInt(targetDate.slice(4, 6)) - 1,
-        parseInt(targetDate.slice(6, 8))
-      );
-      const dayCol = dayOfWeek[dateObj.getDay()];
+      // Zieldatum in Schweizer Zeit bestimmen -- nicht in UTC, sonst zeigt der
+      // Server zwischen Mitternacht und ~02:00 den Fahrplan des Vortags.
+      const targetDate = date || swissDateYmd();
 
-      // Default: aktuelle Schweizer Zeit (CET/CEST), nicht Mitternacht
-      const nowSwiss = new Date().toLocaleTimeString('de-CH', {
-        timeZone: 'Europe/Zurich', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
-      });
-      const startTime = time_from || nowSwiss;
+      // Startzeit: explizite time_from gewinnt. Sonst: bei explizitem Datum ab
+      // Tagesbeginn (der Nutzer will den ganzen Tag), bei "heute" ab jetzt.
+      let startTime;
+      if (time_from) {
+        startTime = time_from;
+      } else if (date) {
+        startTime = '00:00:00';
+      } else {
+        startTime = new Date().toLocaleTimeString('de-CH', {
+          timeZone: 'Europe/Zurich', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+        });
+      }
 
       const { ids: relatedStops, matched } = resolveRelatedStops(d, stop_id);
 
@@ -281,7 +355,9 @@ function createMcpServer() {
 
       const stopPlaceholders = relatedStops.map(() => '?').join(',');
 
-      const results = d.prepare(`
+      // Eine Abfrage fuer einen Service-Tag. minTime ist eine GTFS-Zeit
+      // (kann > 24:00 sein). Liefert Rohzeilen inkl. der GTFS-departure_time.
+      const queryDay = (ymd, minTime) => d.prepare(`
         SELECT
           st.departure_time,
           st.arrival_time,
@@ -300,29 +376,44 @@ function createMcpServer() {
         WHERE st.stop_id IN (${stopPlaceholders})
           AND st.departure_time >= ?
           AND (
-            -- Fall 1: Service aktiv via calendar (Basis-Fahrplan)
             (
               t.service_id IN (
                 SELECT service_id FROM calendar
-                WHERE ${dayCol} = 1
-                  AND start_date <= ?
-                  AND end_date >= ?
+                WHERE ${weekdayCol(ymd)} = 1 AND start_date <= ? AND end_date >= ?
               )
               AND t.service_id NOT IN (
-                SELECT service_id FROM calendar_dates
-                WHERE date = ? AND exception_type = 2
+                SELECT service_id FROM calendar_dates WHERE date = ? AND exception_type = 2
               )
             )
-            OR
-            -- Fall 2: Service explizit hinzugefuegt via calendar_dates
-            t.service_id IN (
-              SELECT service_id FROM calendar_dates
-              WHERE date = ? AND exception_type = 1
+            OR t.service_id IN (
+              SELECT service_id FROM calendar_dates WHERE date = ? AND exception_type = 1
             )
           )
         ORDER BY st.departure_time
         LIMIT ?
-      `).all(...relatedStops, startTime, targetDate, targetDate, targetDate, targetDate, limit);
+      `).all(...relatedStops, minTime, ymd, ymd, ymd, ymd, limit);
+
+      // Heutiger Betriebstag ab startTime.
+      const todayRows = queryDay(targetDate, startTime).map(r => ({
+        ...r, _sort: hmsToSec(r.departure_time)
+      }));
+
+      // Nachtkurse aus dem VORTAGS-Service: ein Kurs um 00:30 heute ist dort
+      // als 24:30 kodiert. Wir suchen Vortags-Zeiten >= startTime+24h und
+      // normalisieren sie auf die Wanduhr.
+      const prevDate = prevYmd(targetDate);
+      const prevRows = queryDay(prevDate, shift24(startTime)).map(r => ({
+        ...r,
+        departure_time: normalizeTime(r.departure_time),
+        arrival_time: r.arrival_time ? normalizeTime(r.arrival_time) : r.arrival_time,
+        _sort: hmsToSec(r.departure_time) - 24 * 3600
+      }));
+
+      // Zusammenfuehren, nach Wanduhrzeit sortieren, auf limit kappen.
+      const results = [...prevRows, ...todayRows]
+        .sort((a, b) => a._sort - b._sort)
+        .slice(0, limit)
+        .map(({ _sort, ...rest }) => rest);
 
       return {
         content: [{
@@ -425,51 +516,12 @@ function createMcpServer() {
       limit: z.number().int().min(1).max(1000).default(100).describe('Maximale Anzahl Ergebnisse')
     },
     async ({ sql, limit }) => {
-      // Sicherheitsprüfung: Nur SELECT erlaubt
-      const normalized = sql.trim().replace(/\s+/g, ' ').toUpperCase();
-      const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'REINDEX'];
-      for (const keyword of forbidden) {
-        // Prüfe ob das Keyword als eigenständiges Wort vorkommt (nicht als Teil eines Strings)
-        const regex = new RegExp(`\\b${keyword}\\b`);
-        if (regex.test(normalized)) {
-          return {
-            content: [{ type: 'text', text: JSON.stringify({ error: `Verbotene Operation: ${keyword}. Nur SELECT-Abfragen sind erlaubt.` }) }],
-            isError: true
-          };
-        }
-      }
-
-      if (!normalized.startsWith('SELECT')) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ error: 'Abfrage muss mit SELECT beginnen.' }) }],
-          isError: true
-        };
-      }
-
-      try {
-        const d = getDb();
-        // LIMIT erzwingen, falls nicht vorhanden
-        let execSql = sql.trim();
-        if (!normalized.includes('LIMIT')) {
-          execSql += ` LIMIT ${limit}`;
-        }
-
-        const results = d.prepare(execSql).all();
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              count: results.length,
-              results
-            }, null, 2)
-          }]
-        };
-      } catch (err) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ error: `SQL-Fehler: ${err.message}` }) }],
-          isError: true
-        };
-      }
+      // Gemeinsame, gehaertete Validierung/Ausfuehrung (siehe validateAndRunSQL).
+      const result = validateAndRunSQL(sql, limit);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        isError: !!result.error
+      };
     }
   );
 
@@ -530,25 +582,46 @@ function createMcpServer() {
 
 // --- SQL-Validierung (shared) ---
 function validateAndRunSQL(sql, limitDefault = 100) {
-  const normalized = sql.trim().replace(/\s+/g, ' ').toUpperCase();
-  const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'REINDEX'];
+  if (typeof sql !== 'string' || !sql.trim()) {
+    return { error: 'SQL-Abfrage fehlt oder ist leer.' };
+  }
+  const trimmed = sql.trim();
+
+  // Fuer die Schluesselwort-Pruefung String-Literale und "quoted identifiers"
+  // ausblenden. Sonst loest ein Haltestellenname oder ein Literal wie 'CREATE'
+  // faelschlich Alarm aus -- ein realer Falsch-Positiv des alten Codes.
+  const scan = trimmed
+    .replace(/'(?:[^']|'')*'/g, "''")
+    .replace(/"(?:[^"]|"")*"/g, '""')
+    .toUpperCase();
+
+  // Nur lesende Abfragen. WITH ... SELECT (CTE) ist erlaubt und rein lesend.
+  if (!/^SELECT\b/.test(scan) && !/^WITH\b/.test(scan)) {
+    return { error: 'Nur SELECT- oder WITH...SELECT-Abfragen sind erlaubt.' };
+  }
+  const forbidden = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'CREATE', 'ATTACH', 'DETACH', 'PRAGMA', 'VACUUM', 'REINDEX', 'REPLACE'];
   for (const keyword of forbidden) {
-    if (new RegExp(`\\b${keyword}\\b`).test(normalized)) {
-      return { error: `Verbotene Operation: ${keyword}. Nur SELECT-Abfragen sind erlaubt.` };
+    if (new RegExp(`\\b${keyword}\\b`).test(scan)) {
+      return { error: `Verbotene Operation: ${keyword}. Nur lesende Abfragen sind erlaubt.` };
     }
   }
-  if (!normalized.startsWith('SELECT')) {
-    return { error: 'Abfrage muss mit SELECT beginnen.' };
-  }
 
-  const d = getDb();
-  let execSql = sql.trim();
-  if (!normalized.includes('LIMIT')) {
-    execSql += ` LIMIT ${limitDefault}`;
-  }
+  // limit robust auf eine positive Ganzzahl 1..1000 bringen -- der Wert darf
+  // NIE roh aus dem Request in die SQL wandern (Injection/DoS via -1 oder riesig).
+  const cap = Math.max(1, Math.min(1000, Math.floor(Number(limitDefault)) || 100));
 
-  const results = d.prepare(execSql).all();
-  return { count: results.length, results };
+  // Nur anhaengen, wenn keine ECHTE abschliessende LIMIT-Klausel existiert
+  // (Substring in einem Alias wie "deLIMITer" darf die Kappung nicht umgehen).
+  const hasLimit = /\bLIMIT\s+\d+/.test(scan);
+  const execSql = hasLimit ? trimmed : `${trimmed} LIMIT ${cap}`;
+
+  try {
+    const d = getDb();
+    const results = d.prepare(execSql).all();
+    return { count: results.length, results };
+  } catch (err) {
+    return { error: `SQL-Fehler: ${err.message}` };
+  }
 }
 
 // --- Zugriffsschutz ---
@@ -653,7 +726,7 @@ function createApp() {
         return res.status(400).json({ error: 'SQL-Abfrage fehlt. Sende { "sql": "SELECT ..." }' });
       }
       const result = validateAndRunSQL(sql, limit || 200);
-      res.json(result);
+      res.status(result.error ? 400 : 200).json(result);
     } catch (err) {
       res.status(400).json({ error: `SQL-Fehler: ${err.message}` });
     }
@@ -771,4 +844,9 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createMcpServer, createApp, getDb, closeDb, getDbStats, getMeta, runUpdateCycle, DB_PATH };
+module.exports = {
+  createMcpServer, createApp, getDb, closeDb, getDbStats, getMeta, runUpdateCycle, DB_PATH,
+  // Reine Hilfsfunktionen fuer Unit-Tests:
+  validateAndRunSQL, safeEqual, didokToSloid,
+  hmsToSec, secToHms, shift24, normalizeTime, swissDateYmd, prevYmd, weekdayCol, HVT_RANGES
+};

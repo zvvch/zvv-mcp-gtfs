@@ -27,7 +27,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
     && mkdir -p /app/zvv-data/gtfs \
     && chown -R node:node /app/zvv-data
 
-# GTFS-Rohdaten (~2 GB) und SQLite-DB (~3.8 GB) leben im Volume,
+# GTFS-Rohdaten (~2.9 GB) und SQLite-DB (~5.3 GB) leben im Volume,
 # nicht im Image. Das haelt das Image klein und die Daten aktualisierbar.
 VOLUME ["/app/zvv-data"]
 

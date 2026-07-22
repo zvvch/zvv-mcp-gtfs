@@ -11,6 +11,8 @@ services:
       # rein lokalen Betrieb ohne Tunnel vertretbar.
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
       GTFS_AUTO_UPDATE: ${GTFS_AUTO_UPDATE:-true}
+      # Alle in der README dokumentierten Stellschrauben auch wirklich durchreichen.
+      GTFS_UPDATE_INTERVAL_HOURS: ${GTFS_UPDATE_INTERVAL_HOURS:-24}
     volumes:
       - gtfs-data:/app/zvv-data
     ports:

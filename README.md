@@ -34,7 +34,7 @@ docker compose up -d
 
 > **Hinweis zum Image:** Solange das GHCR-Paket auf privat steht, schlägt der Pull ohne Anmeldung fehl. Entweder einmalig `docker login ghcr.io`, oder das Paket unter *GitHub → Packages → zvv-mcp-gtfs → Package settings → Change visibility* öffentlich schalten. Alternativ baut `docker compose build` das Image lokal aus dem Repo -- dafür braucht es keine Registry.
 
-Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **etwa 10 bis 15 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `gtfs-data` und überleben Updates und Neustarts.
+Beim allerersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2.9 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **etwa 10 bis 15 Minuten** und passiert genau einmal -- danach liegen die Daten im Volume `zvv-gtfs-data` und überleben Updates und Neustarts.
 
 Fortschritt mitlesen:
 
@@ -106,15 +106,17 @@ Die Web-UI fragt bei der ersten 401-Antwort danach und merkt es sich im Browser.
 
 ### GTFS route_type Referenz
 
-| Typ | Verkehrsmittel |
-|-----|---------------|
-| 0 | Tram / Strassenbahn |
-| 1 | U-Bahn / Metro |
-| 2 | Bahn (S-Bahn, IC, IR) |
-| 3 | Bus |
-| 4 | Fähre |
-| 6 | Gondelbahn |
-| 7 | Standseilbahn |
+Der Schweizer Feed verwendet die **erweiterten HVT-Typen** (100-1599), nicht die klassischen Werte 0-7. `get_routes` akzeptiert beides: klassische Werte werden automatisch auf den passenden HVT-Bereich abgebildet.
+
+| Klassisch | HVT-Bereich | Verkehrsmittel |
+|-----------|-------------|----------------|
+| 0 | 900-999 | Tram / Strassenbahn |
+| 1 | 400-499 | U-Bahn / Metro |
+| 2 | 100-199 | Bahn (S-Bahn, IC, IR) |
+| 3 | 700-799 | Bus |
+| 4 | 1000-1099 | Schiff / Fähre |
+| 6 | 1300-1399 | Luftseilbahn / Gondel |
+| 7 | 1400-1499 | Standseilbahn |
 
 ## MCP-Ressourcen
 
