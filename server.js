@@ -73,6 +73,21 @@ function hasOriginalStopId(d) {
 }
 
 /**
+ * Uebersetzt eine alte DIDOK-Nummer in die heutige SLOID.
+ *
+ * Schweizer DIDOK-Nummern sind 85 + fuenf Ziffern (8503000 = Zuerich HB).
+ * Die SLOID nutzt denselben Kern ohne Laendervorsatz und ohne fuehrende
+ * Nullen: ch:1:sloid:3000. Geprueft an Zuerich HB, Stadelhofen, Basel SBB,
+ * Bern, Luzern, Lausanne und St. Gallen.
+ *
+ * Gibt null zurueck, wenn die Eingabe keine DIDOK-Nummer ist.
+ */
+function didokToSloid(stopId) {
+  if (!/^85\d{5}$/.test(stopId)) return null;
+  return 'ch:1:sloid:' + Number(stopId.slice(2));
+}
+
+/**
  * Findet alle Haltestellen-IDs, die zur uebergebenen gehoeren.
  *
  * Schweizer GTFS kennt mehrere Ebenen fuer denselben Ort: Station
@@ -80,16 +95,26 @@ function hasOriginalStopId(d) {
  * Gleise (ch:1:sloid:3000:3:4). Wer nach Abfahrten fragt, meint praktisch
  * immer alle davon.
  *
- * Seit Feed 2026-07 sind die alten DIDOK-Nummern (8503000) durch SLOIDs
- * ersetzt. Ohne die Aufloesung ueber original_stop_id liefert eine bekannte
- * Nummer stillschweigend null Abfahrten -- schlimmer als ein Fehler, weil es
- * wie ein leerer Fahrplan aussieht.
+ * Seit Feed 2026-07 sind die alten DIDOK-Nummern durch SLOIDs ersetzt und
+ * kommen im Feed gar nicht mehr vor. Ohne Uebersetzung liefert eine bekannte
+ * Nummer wie 8503000 stillschweigend null Abfahrten -- schlimmer als ein
+ * Fehler, weil es wie ein leerer Fahrplan aussieht statt wie eine falsche ID.
+ *
+ * Liefert { ids, matched }: matched=false heisst, die Eingabe passt auf keine
+ * bekannte Haltestelle. Der Aufrufer soll das melden statt leer zu antworten.
  */
 function resolveRelatedStops(d, stopId) {
-  const useOriginal = hasOriginalStopId(d);
-  const seeds = useOriginal
-    ? d.prepare('SELECT stop_id, parent_station FROM stops WHERE stop_id = ? OR original_stop_id = ?').all(stopId, stopId)
-    : d.prepare('SELECT stop_id, parent_station FROM stops WHERE stop_id = ?').all(stopId);
+  // Kandidaten: die Eingabe selbst, plus die uebersetzte SLOID.
+  const candidates = [stopId];
+  const sloid = didokToSloid(stopId);
+  if (sloid) candidates.push(sloid);
+
+  const placeholders = candidates.map(() => '?').join(',');
+  // original_stop_id traegt bei auslaendischen Haltestellen die Alt-Kennung;
+  // bei Schweizer Stops dupliziert sie nur die SLOID.
+  const seeds = hasOriginalStopId(d)
+    ? d.prepare(`SELECT stop_id, parent_station FROM stops WHERE stop_id IN (${placeholders}) OR original_stop_id IN (${placeholders})`).all(...candidates, ...candidates)
+    : d.prepare(`SELECT stop_id, parent_station FROM stops WHERE stop_id IN (${placeholders})`).all(...candidates);
 
   // Eingabe immer mitfuehren, auch wenn sie in stops nicht auftaucht.
   const ids = new Set([stopId]);
@@ -110,7 +135,7 @@ function resolveRelatedStops(d, stopId) {
     }
   }
 
-  return [...ids];
+  return { ids: [...ids], matched: seeds.length > 0 };
 }
 
 /** Holt Metadaten aus der _meta-Tabelle */
@@ -238,7 +263,22 @@ function createMcpServer() {
       });
       const startTime = time_from || nowSwiss;
 
-      const relatedStops = resolveRelatedStops(d, stop_id);
+      const { ids: relatedStops, matched } = resolveRelatedStops(d, stop_id);
+
+      // Eine unbekannte ID darf nicht wie ein leerer Fahrplan aussehen.
+      if (!matched) {
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              error: `Haltestelle '${stop_id}' nicht gefunden.`,
+              hint: 'Mit search_stops die aktuelle stop_id ermitteln. Seit Fahrplan 2026-07 nutzt die Schweiz SLOIDs (ch:1:sloid:3000) statt DIDOK-Nummern (8503000); alte Nummern werden automatisch uebersetzt, sofern sie gueltig sind.'
+            }, null, 2)
+          }],
+          isError: true
+        };
+      }
+
       const stopPlaceholders = relatedStops.map(() => '?').join(',');
 
       const results = d.prepare(`
