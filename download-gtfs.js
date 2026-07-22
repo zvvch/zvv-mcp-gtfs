@@ -183,10 +183,10 @@ function downloadWithRedirect(url, destStream, maxRedirects = 5) {
 /**
  * Lädt ZIP herunter, validiert, entpackt und räumt auf
  */
-async function downloadAndExtractZip(zipUrl) {
-  if (!fs.existsSync(TARGET_DIR)) fs.mkdirSync(TARGET_DIR, { recursive: true });
+async function downloadAndExtractZip(zipUrl, targetDir = TARGET_DIR) {
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
-  const tmpZip = path.join(TARGET_DIR, 'gtfs-latest.zip');
+  const tmpZip = path.join(targetDir, 'gtfs-latest.zip');
   const file = fs.createWriteStream(tmpZip);
 
   console.log(`Starte Download: ${zipUrl}`);
@@ -203,7 +203,7 @@ async function downloadAndExtractZip(zipUrl) {
   console.log('  Entpacke...');
   await new Promise((resolve, reject) => {
     fs.createReadStream(tmpZip)
-      .pipe(unzipper.Extract({ path: TARGET_DIR }))
+      .pipe(unzipper.Extract({ path: targetDir }))
       .on('close', resolve)
       .on('error', (err) => {
         fs.unlinkSync(tmpZip);
@@ -217,10 +217,10 @@ async function downloadAndExtractZip(zipUrl) {
     filename,
     url: zipUrl,
     downloaded_at: new Date().toISOString(),
-    unpacked_to: TARGET_DIR,
+    unpacked_to: targetDir,
     source_page: GTFS_PAGE
   };
-  fs.writeFileSync(path.join(TARGET_DIR, 'gtfs-status.json'), JSON.stringify(status, null, 2), 'utf8');
+  fs.writeFileSync(path.join(targetDir, 'gtfs-status.json'), JSON.stringify(status, null, 2), 'utf8');
 
   // Aufräumen
   fs.unlinkSync(tmpZip);

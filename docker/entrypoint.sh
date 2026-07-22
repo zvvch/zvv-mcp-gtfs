@@ -30,13 +30,8 @@ if [ ! -f "$SENTINEL" ]; then
   log "Erstaufbau abgeschlossen."
 else
   log "Datenbank vorhanden ($(du -h "$DB" | cut -f1))."
-
-  if [ "${GTFS_AUTO_UPDATE:-true}" = "true" ]; then
-    log "Pruefe auf neuen Fahrplan..."
-    # Fehlschlag darf den Start nicht blockieren — lieber alte Daten
-    # ausliefern als gar nicht hochkommen.
-    node check-update.js || log "Update-Check fehlgeschlagen, starte mit vorhandenem Bestand."
-  fi
+  # Fahrplan-Updates macht der Server selbst, im Hintergrund und atomar.
+  # Hier zu warten wuerde den Start unnoetig blockieren.
 fi
 
 exec "$@"

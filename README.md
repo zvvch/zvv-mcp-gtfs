@@ -132,19 +132,30 @@ Die Web-UI fragt bei der ersten 401-Antwort danach und merkt es sich im Browser.
 |----------|---------|--------------|
 | `MCP_AUTH_TOKEN` | -- | Bearer-Token für `/mcp` und `/api/query`. Leer = offen. |
 | `TUNNEL_TOKEN` | -- | Cloudflare-Tunnel-Token. Nur für `--profile tunnel`. |
-| `GTFS_AUTO_UPDATE` | `true` | Bei jedem Start auf neuen Fahrplan prüfen. |
+| `GTFS_AUTO_UPDATE` | `true` | Fahrplan selbstständig aktuell halten. `false` = nur melden. |
+| `GTFS_UPDATE_INTERVAL_HOURS` | `24` | Abstand zwischen zwei Update-Prüfungen. |
 | `PORT` | `3000` | Port des HTTP-Servers. |
 | `GTFS_DB_PATH` | `zvv-data/gtfs.db` | Pfad zur SQLite-Datenbank. |
 
 ## Fahrplan-Updates
 
-opentransportdata.swiss veröffentlicht regelmässig neue Fahrpläne. Mit `GTFS_AUTO_UPDATE=true` prüft der Container bei jedem Start und baut bei Bedarf neu auf.
+opentransportdata.swiss veröffentlicht mehrmals im Jahr einen neuen Fahrplan. Der Server hält sich selbst aktuell -- ohne Cronjob, ohne Neustart, ohne Handgriff von aussen.
 
-Manuell:
+**Wie es abläuft:** Beim Start und danach täglich prüft der Server, ob ein neuerer Feed vorliegt. Wenn ja, lädt und importiert er ihn **neben** dem laufenden Bestand in ein Staging-Verzeichnis. Erst wenn der neue Stand vollständig ist, wird umgeschwenkt -- zwei Renames, dann öffnet der Server die neue Datenbank.
+
+Das hat zwei Konsequenzen, die beide beabsichtigt sind:
+
+- **Ein fehlgeschlagenes Update kostet nichts.** Bricht der Download ab oder scheitert der Import, bleibt der bisherige Fahrplan unangetastet in Betrieb. Der Server beantwortet die ganze Zeit über Anfragen.
+- **Es braucht kurzzeitig doppelten Plattenplatz** (~8 GB statt ~4 GB), solange Staging und Produktivstand nebeneinander liegen.
+
+Der aktuelle Stand steht unter `/health` im Feld `update`.
+
+Manuell auslösen:
 
 ```bash
 docker compose exec gtfs node check-update.js --check   # nur prüfen
-docker compose restart gtfs                             # Update anwenden
+docker compose exec gtfs node check-update.js           # prüfen und aktualisieren
+docker compose exec gtfs node check-update.js --force   # neu aufbauen, auch wenn aktuell
 ```
 
 ## Lokal ohne Docker (Entwicklung)

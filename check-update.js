@@ -15,8 +15,55 @@ const fs = require('fs');
 const path = require('path');
 const { fetchLatestZipUrl, GTFS_PAGE } = require('./download-gtfs.js');
 
-const STATUS_FILE = path.join(__dirname, 'zvv-data', 'gtfs', 'gtfs-status.json');
-const DB_PATH = path.join(__dirname, 'zvv-data', 'gtfs.db');
+const DATA_DIR = path.join(__dirname, 'zvv-data');
+const GTFS_DIR = path.join(DATA_DIR, 'gtfs');
+const STATUS_FILE = path.join(GTFS_DIR, 'gtfs-status.json');
+const DB_PATH = path.join(DATA_DIR, 'gtfs.db');
+
+// Neue Daten werden erst vollstaendig danebengebaut und dann umgeschwenkt.
+// So bleibt der laufende Bestand bedienbar, falls Download oder Import scheitert.
+const STAGE_DIR = path.join(DATA_DIR, 'gtfs.staging');
+const STAGE_DB = path.join(DATA_DIR, 'gtfs.staging.db');
+
+const DB_SUFFIXES = ['', '-wal', '-shm'];
+
+/** Entfernt eine SQLite-DB samt WAL- und SHM-Seitendateien */
+function removeDbFiles(dbPath) {
+  for (const ext of DB_SUFFIXES) {
+    fs.rmSync(dbPath + ext, { force: true });
+  }
+}
+
+/** Raeumt einen halbfertigen Staging-Stand weg */
+function clearStaging() {
+  fs.rmSync(STAGE_DIR, { recursive: true, force: true });
+  removeDbFiles(STAGE_DB);
+}
+
+/**
+ * Schwenkt den fertigen Staging-Stand an die produktive Stelle.
+ * Erst umbenennen, dann aufraeumen -- das Zeitfenster, in dem nichts
+ * Vollstaendiges dasteht, ist damit auf zwei Renames begrenzt.
+ */
+function promoteStaging() {
+  const oldDir = GTFS_DIR + '.old';
+  const oldDb = DB_PATH + '.old';
+
+  fs.rmSync(oldDir, { recursive: true, force: true });
+  fs.rmSync(oldDb, { force: true });
+
+  if (fs.existsSync(GTFS_DIR)) fs.renameSync(GTFS_DIR, oldDir);
+  fs.renameSync(STAGE_DIR, GTFS_DIR);
+
+  // WAL/SHM des alten Bestands sind nach dem Schwenk bedeutungslos.
+  if (fs.existsSync(DB_PATH)) fs.renameSync(DB_PATH, oldDb);
+  fs.rmSync(DB_PATH + '-wal', { force: true });
+  fs.rmSync(DB_PATH + '-shm', { force: true });
+  fs.renameSync(STAGE_DB, DB_PATH);
+
+  fs.rmSync(oldDir, { recursive: true, force: true });
+  fs.rmSync(oldDb, { force: true });
+}
 
 /**
  * Extrahiert das Datum aus einem GTFS-ZIP-URL oder Dateinamen
@@ -58,7 +105,7 @@ function getCurrentVersion() {
  * Hauptfunktion: Prueft auf Updates und fuehrt sie optional durch
  */
 async function checkForUpdate(options = {}) {
-  const { checkOnly = false, force = false } = options;
+  const { checkOnly = false, force = false, onBeforeSwap = null } = options;
 
   console.log('[Update-Check] Pruefe auf neue GTFS-Daten...');
   console.log(`[Update-Check] Quelle: ${GTFS_PAGE}`);
@@ -100,28 +147,31 @@ async function checkForUpdate(options = {}) {
     return { updateAvailable: true, current: current.filename, latest: latestFilename, latestUrl };
   }
 
-  // Update durchfuehren
-  console.log('[Update-Check] Starte Download und Import...');
+  // Update durchfuehren -- neben dem laufenden Bestand, nicht an seiner Stelle.
+  console.log('[Update-Check] Starte Download und Import (Staging)...');
 
-  // Alte Daten entfernen
-  const gtfsDir = path.join(__dirname, 'zvv-data', 'gtfs');
-  const gtfsFiles = fs.readdirSync(gtfsDir).filter(f => f.endsWith('.txt'));
-  for (const f of gtfsFiles) {
-    fs.unlinkSync(path.join(gtfsDir, f));
-  }
-  // DB entfernen
-  for (const ext of ['', '-wal', '-shm']) {
-    const dbFile = DB_PATH + ext;
-    if (fs.existsSync(dbFile)) fs.unlinkSync(dbFile);
-  }
-
-  // Download
   const { downloadAndExtractZip } = require('./download-gtfs.js');
-  await downloadAndExtractZip(latestUrl);
-
-  // Import
   const { importGTFS } = require('./import-gtfs.js');
-  await importGTFS();
+
+  try {
+    clearStaging();
+    await downloadAndExtractZip(latestUrl, STAGE_DIR);
+    await importGTFS(STAGE_DB, STAGE_DIR);
+  } catch (err) {
+    // Der bisherige Bestand ist unangetastet -- der Server laeuft weiter.
+    clearStaging();
+    console.error(`[Update-Check] Update fehlgeschlagen: ${err.message}`);
+    console.error('[Update-Check] Bisheriger Bestand bleibt unveraendert.');
+    return { updateAvailable: true, updated: false, error: err.message, current: current.filename, latest: latestFilename };
+  }
+
+  // Ab hier steht ein vollstaendiger neuer Stand bereit. Der Aufrufer
+  // bekommt die Gelegenheit, offene DB-Handles zu schliessen.
+  if (typeof onBeforeSwap === 'function') {
+    await onBeforeSwap();
+  }
+
+  promoteStaging();
 
   console.log(`[Update-Check] Update abgeschlossen: ${latestFilename}`);
   return { updateAvailable: true, updated: true, current: current.filename, latest: latestFilename };

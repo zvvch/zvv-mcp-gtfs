@@ -30,6 +30,22 @@ function getDb() {
   return db;
 }
 
+/**
+ * Gibt das DB-Handle frei. Noetig, bevor die Datei durch einen neuen
+ * Fahrplan ersetzt wird -- sonst liest die offene Verbindung weiter den
+ * alten Inode. Die naechste Abfrage oeffnet die Datei automatisch neu.
+ */
+function closeDb() {
+  if (db) {
+    try {
+      db.close();
+    } catch {
+      // Handle war bereits zu -- nicht weiter tragisch
+    }
+    db = null;
+  }
+}
+
 // --- Hilfsfunktionen ---
 
 /** Gibt DB-Statistiken zurück */
@@ -588,30 +604,66 @@ function createApp() {
   return app;
 }
 
-// --- GTFS Update-Status (wird beim Start gesetzt) ---
-let updateStatus = { checked: false, updateAvailable: false, latest: null, checkedAt: null, error: null };
+// --- GTFS Auto-Update ---
+// Der Fahrplan wird mehrmals im Jahr neu veroeffentlicht. Ein Container,
+// der monatelang laeuft, wuerde ohne das hier auf altem Stand haengenbleiben.
+const AUTO_UPDATE = (process.env.GTFS_AUTO_UPDATE || 'true').toLowerCase() !== 'false';
+const UPDATE_INTERVAL_HOURS = Number(process.env.GTFS_UPDATE_INTERVAL_HOURS) || 24;
 
-async function checkGtfsUpdateOnStartup() {
+let updateStatus = {
+  checked: false, updateAvailable: false, updating: false,
+  current: null, latest: null, lastUpdatedAt: null, checkedAt: null, error: null
+};
+let updateRunning = false;
+
+async function runUpdateCycle() {
+  if (updateRunning) return;
+  updateRunning = true;
+  updateStatus.updating = true;
+
   try {
     const { checkForUpdate } = require('./check-update.js');
-    const result = await checkForUpdate({ checkOnly: true });
+    const result = await checkForUpdate({
+      // Ohne Auto-Update nur melden, nicht anfassen.
+      checkOnly: !AUTO_UPDATE,
+      // Handle schliessen, bevor die DB-Datei ersetzt wird.
+      onBeforeSwap: closeDb
+    });
+
     updateStatus = {
       checked: true,
       updateAvailable: result.updateAvailable || false,
-      current: result.current || null,
+      updating: false,
+      current: result.current || updateStatus.current,
       latest: result.latest || null,
-      latestUrl: result.latestUrl || null,
+      lastUpdatedAt: result.updated ? new Date().toISOString() : updateStatus.lastUpdatedAt,
       checkedAt: new Date().toISOString(),
       error: result.error || null
     };
-    if (result.updateAvailable) {
-      console.log(`\n  ⚠  Neues GTFS-Update verfuegbar: ${result.latest}`);
-      console.log(`     Aktuell: ${result.current || '(keine)'}`);
-      console.log(`     Update mit: node check-update.js\n`);
+
+    if (result.updated) {
+      console.log(`[Update] Neuer Fahrplan aktiv: ${result.latest}`);
+    } else if (result.updateAvailable && !AUTO_UPDATE) {
+      console.log(`[Update] Neuer Fahrplan verfuegbar: ${result.latest} (Auto-Update ist aus)`);
     }
   } catch (err) {
-    updateStatus = { checked: true, updateAvailable: false, checkedAt: new Date().toISOString(), error: err.message };
-    console.error(`[Update-Check] Fehler: ${err.message}`);
+    updateStatus = { ...updateStatus, checked: true, updating: false, checkedAt: new Date().toISOString(), error: err.message };
+    console.error(`[Update] Fehler: ${err.message}`);
+  } finally {
+    updateRunning = false;
+    updateStatus.updating = false;
+  }
+}
+
+function startUpdateScheduler() {
+  // Erster Lauf sofort, aber im Hintergrund -- der Server nimmt waehrenddessen
+  // schon Anfragen an und liefert den bisherigen Bestand aus.
+  runUpdateCycle();
+
+  if (AUTO_UPDATE) {
+    const timer = setInterval(runUpdateCycle, UPDATE_INTERVAL_HOURS * 3600 * 1000);
+    // Soll den Prozess nicht am Leben halten.
+    timer.unref();
   }
 }
 
@@ -632,9 +684,15 @@ if (require.main === module) {
       console.log(`     Fuer oeffentliche Erreichbarkeit (z.B. Cloudflare-Tunnel) zwingend setzen.\n`);
     }
 
-    // Async Update-Check im Hintergrund (blockiert Server-Start nicht)
-    checkGtfsUpdateOnStartup();
+    if (AUTO_UPDATE) {
+      console.log(`  Auto-Update:   alle ${UPDATE_INTERVAL_HOURS} h`);
+    } else {
+      console.log(`  Auto-Update:   aus (nur Meldung)`);
+    }
+
+    // Laeuft im Hintergrund, blockiert weder Start noch laufende Anfragen.
+    startUpdateScheduler();
   });
 }
 
-module.exports = { createMcpServer, createApp, getDb, getDbStats, getMeta, DB_PATH };
+module.exports = { createMcpServer, createApp, getDb, closeDb, getDbStats, getMeta, runUpdateCycle, DB_PATH };
