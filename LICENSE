@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Hinweis zu den Fahrplandaten: Diese Lizenz gilt für den Quellcode dieses
-Projekts. Die GTFS-Fahrplandaten stammen von opentransportdata.swiss und
-unterliegen deren eigenen Nutzungsbedingungen. Sie sind nicht Bestandteil
-dieses Repositoriums und werden zur Laufzeit heruntergeladen.

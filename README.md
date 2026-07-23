@@ -353,7 +353,10 @@ Fragen zu den Fahrplandaten selbst — fehlende Linien, falsche Zeiten — gehö
 
 ---
 
-## Lizenz & Quellen
+## Lizenz und Quellen
 
-- Fahrplandaten: [opentransportdata.swiss](https://opentransportdata.swiss) — Open Data
-- MCP SDK: [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/typescript-sdk)
+Der Quellcode steht unter der [MIT-Lizenz](LICENSE).
+
+Die **Fahrplandaten sind nicht Bestandteil dieses Repositoriums**. Sie stammen von [opentransportdata.swiss](https://opentransportdata.swiss), werden zur Laufzeit heruntergeladen und unterliegen deren eigenen Nutzungsbedingungen.
+
+Der MCP-Teil beruht auf dem [offiziellen SDK](https://github.com/modelcontextprotocol/typescript-sdk).
