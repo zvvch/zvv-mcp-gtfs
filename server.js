@@ -6,6 +6,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { registerTools } = require('./mcp-tools.js');
 
 // --- Konfiguration ---
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -246,314 +247,23 @@ function getMeta() {
 }
 
 // --- MCP Server erstellen ---
-function createMcpServer() {
+/**
+ * Baut einen MCP-Server. Mit admin:true kommt zusaetzlich die freie
+ * SQL-Abfrage dazu -- die gehoert nur hinter den geschuetzten Endpunkt.
+ */
+function createMcpServer(options = {}) {
   const server = new McpServer({
-    name: 'ZVV GTFS MCP Server',
-    version: '2.0.0'
+    name: options.admin ? 'ZVV GTFS MCP Server (admin)' : 'ZVV GTFS MCP Server',
+    version: '3.0.0'
   });
 
-  // === TOOLS ===
-
-  // 1. search_stops - Haltestellen suchen
-  server.tool(
-    'search_stops',
-    'Sucht Haltestellen nach Name. Gibt stop_id, stop_name, Koordinaten und Typ zurück.',
-    {
-      query: z.string().describe('Suchbegriff für Haltestellenname'),
-      limit: z.number().int().min(1).max(100).default(20).describe('Maximale Anzahl Ergebnisse')
-    },
-    async ({ query, limit }) => {
-      const d = getDb();
-      const results = d.prepare(`
-        SELECT stop_id, stop_name, stop_lat, stop_lon, location_type, parent_station
-        FROM stops
-        WHERE stop_name LIKE ?
-        ORDER BY
-          CASE WHEN stop_name LIKE ? THEN 0 ELSE 1 END,
-          stop_name
-        LIMIT ?
-      `).all(`%${query}%`, `${query}%`, limit);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            count: results.length,
-            stops: results
-          }, null, 2)
-        }]
-      };
-    }
-  );
-
-  // 2. get_routes - Linien abrufen
-  server.tool(
-    'get_routes',
-    'Gibt ÖV-Linien zurück. Optional filterbar nach Agentur oder Linientyp. Für route_type sind sowohl die klassischen Werte (0=Tram, 1=Metro, 2=Bahn, 3=Bus, 4=Fähre, 6=Gondel, 7=Standseilbahn) als auch die erweiterten HVT-Werte des Schweizer Feeds (z.B. 700=Bus, 900=Tram, 100-199=Bahn) erlaubt; klassische Werte werden automatisch auf die HVT-Bereiche gemappt.',
-    {
-      agency_id: z.string().optional().describe('Filter nach Verkehrsunternehmen (agency_id)'),
-      route_type: z.number().int().optional().describe('Filter nach Linientyp (klassisch 0-7 oder erweitert/HVT)'),
-      limit: z.number().int().min(1).max(500).default(50).describe('Maximale Anzahl Ergebnisse')
-    },
-    async ({ agency_id, route_type, limit }) => {
-      const d = getDb();
-      let sql = `
-        SELECT r.route_id, r.route_short_name, r.route_long_name, r.route_type,
-               r.agency_id, a.agency_name
-        FROM routes r
-        LEFT JOIN agency a ON r.agency_id = a.agency_id
-        WHERE 1=1
-      `;
-      const params = [];
-
-      if (agency_id) {
-        sql += ' AND r.agency_id = ?';
-        params.push(agency_id);
-      }
-      if (route_type !== undefined) {
-        // Klassischen Wert (0-7) auf den HVT-Bereich abbilden, sonst exakt.
-        const range = HVT_RANGES[route_type];
-        if (range) {
-          sql += ' AND r.route_type BETWEEN ? AND ?';
-          params.push(range[0], range[1]);
-        } else {
-          sql += ' AND r.route_type = ?';
-          params.push(route_type);
-        }
-      }
-      sql += ' ORDER BY r.route_short_name LIMIT ?';
-      params.push(limit);
-
-      const results = d.prepare(sql).all(...params);
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            count: results.length,
-            routes: results
-          }, null, 2)
-        }]
-      };
-    }
-  );
-
-  // 3. get_departures - Abfahrten ab Haltestelle
-  server.tool(
-    'get_departures',
-    'Gibt Abfahrten von einer Haltestelle zurück. Zeigt Linie, Richtung und Abfahrtszeit. Löst Parent-Stations automatisch auf (inkl. aller Gleise/Perrons). Ohne time_from werden Abfahrten ab JETZT angezeigt.',
-    {
-      stop_id: z.string().describe('Haltestellen-ID (stop_id)'),
-      date: z.string().optional().describe('Datum im Format YYYYMMDD (default: heute)'),
-      time_from: z.string().optional().describe('Startzeit im Format HH:MM:SS (default: aktuelle Uhrzeit). Für Abfahrten ab sofort weglassen.'),
-      limit: z.number().int().min(1).max(200).default(30).describe('Maximale Anzahl Ergebnisse')
-    },
-    async ({ stop_id, date, time_from, limit }) => {
-      const d = getDb();
-
-      // Zieldatum in Schweizer Zeit bestimmen -- nicht in UTC, sonst zeigt der
-      // Server zwischen Mitternacht und ~02:00 den Fahrplan des Vortags.
-      const targetDate = date || swissDateYmd();
-
-      // Startzeit: explizite time_from gewinnt. Sonst: bei explizitem Datum ab
-      // Tagesbeginn (der Nutzer will den ganzen Tag), bei "heute" ab jetzt.
-      let startTime;
-      if (time_from) {
-        startTime = time_from;
-      } else if (date) {
-        startTime = '00:00:00';
-      } else {
-        startTime = new Date().toLocaleTimeString('de-CH', {
-          timeZone: 'Europe/Zurich', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-      }
-
-      const { ids: relatedStops, matched } = resolveRelatedStops(d, stop_id);
-
-      // Eine unbekannte ID darf nicht wie ein leerer Fahrplan aussehen.
-      if (!matched) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              error: `Haltestelle '${stop_id}' nicht gefunden.`,
-              hint: 'Mit search_stops die aktuelle stop_id ermitteln. Seit Fahrplan 2026-07 nutzt die Schweiz SLOIDs (ch:1:sloid:3000) statt DIDOK-Nummern (8503000); alte Nummern werden automatisch uebersetzt, sofern sie gueltig sind.'
-            }, null, 2)
-          }],
-          isError: true
-        };
-      }
-
-      const stopPlaceholders = relatedStops.map(() => '?').join(',');
-
-      // Eine Abfrage fuer einen Service-Tag. minTime ist eine GTFS-Zeit
-      // (kann > 24:00 sein). Liefert Rohzeilen inkl. der GTFS-departure_time.
-      const queryDay = (ymd, minTime) => d.prepare(`
-        SELECT
-          st.departure_time,
-          st.arrival_time,
-          st.stop_sequence,
-          t.trip_id,
-          t.trip_headsign,
-          t.direction_id,
-          r.route_short_name,
-          r.route_long_name,
-          r.route_type,
-          a.agency_name
-        FROM stop_times st
-        JOIN trips t ON st.trip_id = t.trip_id
-        JOIN routes r ON t.route_id = r.route_id
-        LEFT JOIN agency a ON r.agency_id = a.agency_id
-        WHERE st.stop_id IN (${stopPlaceholders})
-          AND st.departure_time >= ?
-          AND (
-            (
-              t.service_id IN (
-                SELECT service_id FROM calendar
-                WHERE ${weekdayCol(ymd)} = 1 AND start_date <= ? AND end_date >= ?
-              )
-              AND t.service_id NOT IN (
-                SELECT service_id FROM calendar_dates WHERE date = ? AND exception_type = 2
-              )
-            )
-            OR t.service_id IN (
-              SELECT service_id FROM calendar_dates WHERE date = ? AND exception_type = 1
-            )
-          )
-        ORDER BY st.departure_time
-        LIMIT ?
-      `).all(...relatedStops, minTime, ymd, ymd, ymd, ymd, limit);
-
-      // Heutiger Betriebstag ab startTime.
-      const todayRows = queryDay(targetDate, startTime).map(r => ({
-        ...r, _sort: hmsToSec(r.departure_time)
-      }));
-
-      // Nachtkurse aus dem VORTAGS-Service: ein Kurs um 00:30 heute ist dort
-      // als 24:30 kodiert. Wir suchen Vortags-Zeiten >= startTime+24h und
-      // normalisieren sie auf die Wanduhr.
-      const prevDate = prevYmd(targetDate);
-      const prevRows = queryDay(prevDate, shift24(startTime)).map(r => ({
-        ...r,
-        departure_time: normalizeTime(r.departure_time),
-        arrival_time: r.arrival_time ? normalizeTime(r.arrival_time) : r.arrival_time,
-        _sort: hmsToSec(r.departure_time) - 24 * 3600
-      }));
-
-      // Zusammenfuehren, nach Wanduhrzeit sortieren, auf limit kappen.
-      const results = [...prevRows, ...todayRows]
-        .sort((a, b) => a._sort - b._sort)
-        .slice(0, limit)
-        .map(({ _sort, ...rest }) => rest);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            stop_id,
-            date: targetDate,
-            time_from: startTime,
-            count: results.length,
-            departures: results
-          }, null, 2)
-        }]
-      };
-    }
-  );
-
-  // 4. get_trip_details - Fahrt-Details
-  server.tool(
-    'get_trip_details',
-    'Gibt alle Details einer Fahrt zurück: Route, alle Halte mit Zeiten in Reihenfolge.',
-    {
-      trip_id: z.string().describe('Fahrt-ID (trip_id)')
-    },
-    async ({ trip_id }) => {
-      const d = getDb();
-
-      const trip = d.prepare(`
-        SELECT t.trip_id, t.trip_headsign, t.direction_id, t.service_id,
-               r.route_short_name, r.route_long_name, r.route_type,
-               a.agency_name
-        FROM trips t
-        JOIN routes r ON t.route_id = r.route_id
-        LEFT JOIN agency a ON r.agency_id = a.agency_id
-        WHERE t.trip_id = ?
-      `).get(trip_id);
-
-      if (!trip) {
-        return {
-          content: [{ type: 'text', text: JSON.stringify({ error: `Fahrt '${trip_id}' nicht gefunden.` }) }],
-          isError: true
-        };
-      }
-
-      const stops = d.prepare(`
-        SELECT st.stop_sequence, st.arrival_time, st.departure_time,
-               s.stop_id, s.stop_name, s.stop_lat, s.stop_lon
-        FROM stop_times st
-        JOIN stops s ON st.stop_id = s.stop_id
-        WHERE st.trip_id = ?
-        ORDER BY st.stop_sequence
-      `).all(trip_id);
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            trip,
-            stop_count: stops.length,
-            stops
-          }, null, 2)
-        }]
-      };
-    }
-  );
-
-  // 5. get_agencies - Verkehrsunternehmen
-  server.tool(
-    'get_agencies',
-    'Gibt alle Verkehrsunternehmen (Transportunternehmen) zurück mit Anzahl ihrer Linien.',
-    {},
-    async () => {
-      const d = getDb();
-      const results = d.prepare(`
-        SELECT a.agency_id, a.agency_name, a.agency_url,
-               COUNT(r.route_id) as route_count
-        FROM agency a
-        LEFT JOIN routes r ON a.agency_id = r.agency_id
-        GROUP BY a.agency_id
-        ORDER BY route_count DESC
-      `).all();
-
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            count: results.length,
-            agencies: results
-          }, null, 2)
-        }]
-      };
-    }
-  );
-
-  // 6. query_gtfs - Freie SQL-Abfrage (read-only, limitiert)
-  server.tool(
-    'query_gtfs',
-    'Führt eine freie SQL-Abfrage auf den GTFS-Daten aus. Nur SELECT erlaubt. Tabellen: agency, stops, routes, trips, stop_times, calendar, calendar_dates, feed_info, transfers, frequencies.',
-    {
-      sql: z.string().describe('SQL SELECT-Abfrage'),
-      limit: z.number().int().min(1).max(1000).default(100).describe('Maximale Anzahl Ergebnisse')
-    },
-    async ({ sql, limit }) => {
-      // Gemeinsame, gehaertete Validierung/Ausfuehrung (siehe validateAndRunSQL).
-      const result = validateAndRunSQL(sql, limit);
-      return {
-        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        isError: !!result.error
-      };
-    }
-  );
+  // Die Tools liegen in mcp-tools.js. Die Abhaengigkeiten werden
+  // hineingereicht, damit kein Zirkelbezug entsteht.
+  registerTools(server, {
+    getDb, resolveRelatedStops, getMeta, getDbStats, validateAndRunSQL,
+    normalizeForSearch, hasStopNameNorm, NORMALIZE_SQL, HVT_RANGES,
+    swissDateYmd, weekdayCol, prevYmd, shift24, normalizeTime, hmsToSec,
+  }, { admin: !!options.admin });
 
   // === RESOURCES ===
 
@@ -606,6 +316,7 @@ function createMcpServer() {
       };
     }
   );
+
 
   return server;
 }
@@ -859,24 +570,40 @@ function createApp() {
   });
 
   // MCP StreamableHTTP Endpoint
-  app.post('/mcp', requireAuth, async (req, res) => {
-    try {
-      const server = createMcpServer();
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined, // Stateless mode
-      });
-      res.on('close', () => {
-        transport.close();
-        server.close();
-      });
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
-    } catch (err) {
-      console.error('MCP-Fehler:', err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: err.message });
+  /** Baut einen MCP-Request-Handler fuer die gewuenschte Tool-Auswahl */
+  function mcpHandler(admin) {
+    return async (req, res) => {
+      try {
+        const server = createMcpServer({ admin });
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined, // Stateless mode
+        });
+        res.on('close', () => {
+          transport.close();
+          server.close();
+        });
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (err) {
+        console.error('MCP-Fehler:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: err.message });
+        }
       }
-    }
+    };
+  }
+
+  // Oeffentlicher MCP-Endpunkt: OHNE Anmeldung, nur lesende Fachabfragen.
+  // Die Fahrplandaten sind offene Daten; schuetzenswert ist nicht ihre
+  // Vertraulichkeit, sondern die Rechenlast. Die liegt bei der freien
+  // SQL-Abfrage -- und die gibt es hier bewusst nicht.
+  app.post('/mcp', mcpHandler(false));
+
+  // Geschuetzter Endpunkt: zusaetzlich query_gtfs, nur mit Token/Sitzung.
+  app.post('/mcp-admin', requireAuth, mcpHandler(true));
+
+  app.get('/mcp-admin', (req, res) => {
+    res.status(405).json({ error: 'Method Not Allowed. Verwende POST.' });
   });
 
   // GET /mcp und DELETE /mcp für Stateless-Modus ablehnen

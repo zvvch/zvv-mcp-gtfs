@@ -502,9 +502,34 @@ describe('Auth-Middleware', () => {
     assert.equal(res.status, 200);
   });
 
-  it('/mcp ohne Token → 401', async () => {
+  it('/mcp ist BEWUSST oeffentlich -> 200 ohne Token', async () => {
+    // Die Fahrplandaten sind offene Daten. Der oeffentliche Endpunkt traegt
+    // nur lesende Fachtools; die freie SQL-Abfrage liegt auf /mcp-admin.
     const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json, text/event-stream' });
+    assert.equal(res.status, 200);
+  });
+
+  it('/mcp fuehrt query_gtfs NICHT auf', async () => {
+    const res = await post('/mcp', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json, text/event-stream' });
+    const line = res.body.split('\n').find(l => l.startsWith('data:')) || res.body;
+    const tools = JSON.parse(line.replace(/^data:\s*/, '')).result.tools.map(t => t.name);
+    assert.ok(!tools.includes('query_gtfs'), `query_gtfs darf oeffentlich nicht erscheinen: ${tools.join(',')}`);
+    assert.ok(tools.includes('search_stops'));
+    assert.ok(tools.includes('get_connections'));
+  });
+
+  it('/mcp-admin ohne Token → 401', async () => {
+    const res = await post('/mcp-admin', { jsonrpc: '2.0', id: 1, method: 'tools/list' }, { Accept: 'application/json, text/event-stream' });
     assert.equal(res.status, 401);
+  });
+
+  it('/mcp-admin mit Token fuehrt query_gtfs auf', async () => {
+    const res = await post('/mcp-admin', { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+      { Accept: 'application/json, text/event-stream', Authorization: `Bearer ${TOKEN}` });
+    assert.equal(res.status, 200);
+    const line = res.body.split('\n').find(l => l.startsWith('data:')) || res.body;
+    const tools = JSON.parse(line.replace(/^data:\s*/, '')).result.tools.map(t => t.name);
+    assert.ok(tools.includes('query_gtfs'), 'query_gtfs fehlt auf dem Admin-Endpunkt');
   });
 
   it('/health bleibt ohne Token offen → 200', async () => {
