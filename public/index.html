@@ -1436,6 +1436,13 @@ fetch('/api/query', {
       const res = await doFetch();
       if (res.status !== 401) return res;
 
+      // Ein gespeicherter, aber abgelehnter PIN muss weg -- sonst schlaegt
+      // jede weitere Anfrage still fehl (z.B. nach einem PIN-Wechsel).
+      if (apiToken) {
+        apiToken = '';
+        localStorage.removeItem('gtfs_token');
+      }
+
       if (!tokenPending) {
         tokenPending = askForToken('Dieser Server ist geschützt. Bitte den PIN eingeben — er wird lokal im Browser gespeichert.')
           .finally(() => { setTimeout(() => { tokenPending = null; }, 0); });

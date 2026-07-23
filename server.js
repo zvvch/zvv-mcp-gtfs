@@ -596,12 +596,18 @@ function validateAndRunSQL(sql, limitDefault = 100) {
   }
   const trimmed = sql.trim();
 
-  // Fuer die Schluesselwort-Pruefung String-Literale und "quoted identifiers"
-  // ausblenden. Sonst loest ein Haltestellenname oder ein Literal wie 'CREATE'
-  // faelschlich Alarm aus -- ein realer Falsch-Positiv des alten Codes.
+  // Fuer die Pruefung eine bereinigte Fassung bilden:
+  //  1. String-Literale und "quoted identifiers" ausblenden -- sonst loest ein
+  //     Haltestellenname oder ein Literal wie 'CREATE' faelschlich Alarm aus.
+  //  2. Kommentare entfernen -- eine Abfrage darf mit "-- Erklaerung" beginnen,
+  //     ohne dass die SELECT-Pruefung daran scheitert. Reihenfolge zaehlt:
+  //     erst Literale, damit ein "--" INNERHALB eines Strings kein Kommentar ist.
   const scan = trimmed
     .replace(/'(?:[^']|'')*'/g, "''")
     .replace(/"(?:[^"]|"")*"/g, '""')
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .trim()
     .toUpperCase();
 
   // Nur lesende Abfragen. WITH ... SELECT (CTE) ist erlaubt und rein lesend.

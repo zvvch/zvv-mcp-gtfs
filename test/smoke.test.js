@@ -356,6 +356,23 @@ describe('Security (validateAndRunSQL)', () => {
     assert.equal(r.results[0].n, 1);
   });
 
+  it('sollte eine mit Kommentar beginnende Abfrage erlauben', () => {
+    // Die Demo-Abfragen im Frontend beginnen mit "-- Beschreibung".
+    const r = validateAndRunSQL('-- Seilbahnen und Gondeln\nSELECT stop_name FROM stops', 5);
+    assert.ok(!r.error, `Kommentar-Prefix wurde faelschlich blockiert: ${r.error}`);
+    assert.ok(r.count > 0);
+  });
+
+  it('sollte einen Blockkommentar vor SELECT erlauben', () => {
+    const r = validateAndRunSQL('/* Kommentar */ SELECT stop_name FROM stops', 5);
+    assert.ok(!r.error, r.error);
+  });
+
+  it('sollte ein "--" INNERHALB eines Literals nicht als Kommentar werten', () => {
+    const r = validateAndRunSQL("SELECT stop_name FROM stops WHERE stop_name LIKE '%--%'", 5);
+    assert.ok(!r.error, r.error);
+  });
+
   it('sollte Keyword in String-Literal NICHT blocken (Falsch-Positiv)', () => {
     const r = validateAndRunSQL("SELECT stop_name FROM stops WHERE stop_name LIKE '%CREATE%'", 5);
     assert.ok(!r.error, `Keyword im Literal wurde faelschlich blockiert: ${r.error}`);
