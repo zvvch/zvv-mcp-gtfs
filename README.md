@@ -31,6 +31,8 @@ https://gtfs.zvv.dev/mcp-admin    →  OAuth 2.1 oder Bearer-PIN
 
 **Datenbestand** (Fahrplan 2026, Stand Juli): 41.1 Mio. Datensätze — 103'548 Haltestellen, 5'108 Linien, 474 Verkehrsunternehmen, 28.4 Mio. Haltezeiten. Quelle: [opentransportdata.swiss](https://opentransportdata.swiss). Den jeweils aktuellen Stand liefert `get_dataset_info` oder `GET /health`.
 
+**Für wen ist das?** Wenn du den Fahrplan nur *abfragen* willst, brauchst du nichts zu installieren — trage `https://gtfs.zvv.dev/mcp` in deinem Client ein und lies bei [Als MCP-Server einbinden](#als-mcp-server-einbinden) weiter. Der [Schnellstart](#schnellstart) richtet sich an alle, die eine **eigene Instanz** betreiben wollen.
+
 ---
 
 ## Inhalt
@@ -153,6 +155,11 @@ Nächste Abfahrten ab einer Haltestelle. Nimmt eine `stop_id` **oder** einen Hal
 { "stop": "Zürich, Bellevue", "limit": 10 }
 ```
 
+> [!IMPORTANT]
+> `date` erwartet **`YYYYMMDD`** ohne Trennzeichen, `time_from` erwartet **`HH:MM:SS`**. Das ist die GTFS-Konvention, nicht ISO 8601 — `2026-07-23` oder `08:00` führen zu einem Fehler oder zu leeren Ergebnissen. Richtig: `{ "date": "20260723", "time_from": "08:00:00" }`.
+
+Dieselben Formate gelten für `get_connections`.
+
 ### `get_connections(from, to, date?, time_from?, limit?)`
 
 Direkte Verbindungen zwischen zwei Haltestellen, ohne Umsteigen. Beide Angaben als Name oder `stop_id`.
@@ -191,7 +198,28 @@ Welcher Fahrplan geladen ist, wann er geholt wurde, wie viele Datensätze je Tab
 
 ### `query_gtfs(sql, limit?)` — nur auf `/mcp-admin`
 
-Freie lesende SQL-Abfrage. Nur `SELECT` und `WITH … SELECT`. Tabellen: `agency`, `stops`, `routes`, `trips`, `stop_times`, `calendar`, `calendar_dates`, `feed_info`, `transfers`, `frequencies`.
+Freie lesende SQL-Abfrage. Tabellen: `agency`, `stops`, `routes`, `trips`, `stop_times`, `calendar`, `calendar_dates`, `feed_info`, `transfers`, `frequencies`.
+
+Die Abfrage muss mit `SELECT` oder `WITH` beginnen. Ein führender Kommentar (`-- Beschreibung`) ist erlaubt.
+
+Abgewiesen werden Abfragen, die eines dieser Wörter als eigenständigen Bezeichner enthalten:
+
+```
+INSERT · UPDATE · DELETE · DROP · ALTER · CREATE
+ATTACH · DETACH · PRAGMA · VACUUM · REINDEX · REPLACE
+```
+
+Die Prüfung greift nur auf **ganze Wörter ausserhalb von Zeichenketten**. Das heisst konkret:
+
+| Abfrage | Ergebnis |
+|---|---|
+| `WHERE stop_name LIKE '%CREATE%'` | erlaubt — Literale werden ausgeblendet |
+| `SELECT stop_id AS created` | erlaubt — `created` ist nicht `CREATE` |
+| `SELECT REPLACE(name,'a','b')` | **abgewiesen** — `REPLACE` steht auf der Liste |
+
+Die letzte Zeile ist der Preis einer einfachen Wortprüfung: die SQL-Funktion `REPLACE` ist harmlos, trägt aber denselben Namen wie das schreibende Statement. Nutze in dem Fall eine Umschreibung.
+
+Ohne eigene `LIMIT`-Klausel wird eine Obergrenze angehängt. Der Wert aus `limit` wird auf 1 bis 1000 begrenzt und nie unverändert in die Abfrage übernommen.
 
 ### Keine Echtzeitdaten
 
@@ -304,7 +332,11 @@ Manuell auslösen:
 docker compose exec gtfs node check-update.js --check   # nur prüfen
 docker compose exec gtfs node check-update.js           # prüfen und aktualisieren
 docker compose exec gtfs node check-update.js --force   # neu aufbauen
+docker compose restart gtfs                             # danach zwingend
 ```
+
+> [!WARNING]
+> Der Neustart in der letzten Zeile ist Pflicht. `check-update.js` läuft als **eigener Prozess** und tauscht die Datenbankdateien aus, aber der laufende Server hält weiterhin sein Dateihandle auf den alten Stand. Ohne Neustart liefert er unverändert die alten Daten — ohne jeden Hinweis darauf. Der eingebaute Auto-Update-Pfad hat dieses Problem nicht: er schliesst das Handle vor dem Wechsel selbst.
 
 ---
 
@@ -340,7 +372,7 @@ zvv-mcp-gtfs/
 |---|---|
 | Fehler melden | [Issue eröffnen](https://github.com/zvvch/zvv-mcp-gtfs/issues/new/choose) |
 | Funktion vorschlagen | [Issue eröffnen](https://github.com/zvvch/zvv-mcp-gtfs/issues/new/choose) |
-| Frage zur Nutzung | [Discussions](https://github.com/zvvch/zvv-mcp-gtfs/discussions) |
+| Frage zur Nutzung | [Issue eröffnen](https://github.com/zvvch/zvv-mcp-gtfs/issues/new/choose) |
 | Sicherheitsproblem | vertraulich nach [SECURITY.md](SECURITY.md), **nicht** als Issue |
 | Änderung beitragen | [CONTRIBUTING.md](CONTRIBUTING.md) |
 

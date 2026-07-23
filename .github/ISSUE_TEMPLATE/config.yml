@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Sicherheitsproblem melden
-    url: https://github.com/zvvch/zvv-mcp-gtfs/security/advisories/new
+    url: https://github.com/zvvch/zvv-mcp-gtfs/blob/main/SECURITY.md
     about: Schwachstellen bitte vertraulich melden, nicht als öffentliches Issue.
-  - name: Frage zur Nutzung
-    url: https://github.com/zvvch/zvv-mcp-gtfs/discussions
-    about: Fragen zur Einbindung oder zu den Fahrplandaten.
+  - name: Fahrplandaten sind fehlerhaft
+    url: https://opentransportdata.swiss
+    about: Fehlende Linien oder falsche Zeiten stammen aus dem Feed, nicht aus diesem Projekt.

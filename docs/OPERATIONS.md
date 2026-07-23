@@ -1,8 +1,10 @@
 # Betrieb
 
-Deployment, Cloudflare-Tunnel und Fehlersuche.
+Deployment, Aktualisierung, Wiederherstellung, Cloudflare-Tunnel und Fehlersuche.
 
 - [Deployment](#deployment)
+- [Neue Version ausrollen](#neue-version-ausrollen)
+- [Datenbestand wiederherstellen](#datenbestand-wiederherstellen)
 - [Cloudflare-Tunnel](#cloudflare-tunnel)
 - [Reboot-Festigkeit](#reboot-festigkeit)
 - [Plattenplatz](#plattenplatz)
@@ -119,6 +121,50 @@ Am zuverlässigsten stellst du das in der Oberfläche um: *Docker Desktop → Se
 Der Spitzenwert entsteht durch den atomaren Wechsel: der neue Stand — Rohdaten **und** Datenbank — entsteht vollständig neben dem alten, bevor umgeschaltet wird. Rechne mit mindestens **9 GB freiem Platz** zusätzlich zum Dauerbedarf. Reicht er nicht, schlägt das Update fehl und der alte Stand läuft unverändert weiter.
 
 ---
+
+## Neue Version ausrollen
+
+```bash
+git pull
+docker compose --profile tunnel up -d --build
+docker compose ps            # healthy abwarten
+curl -s http://localhost:3000/health
+```
+
+Der Build dauert eine knappe Minute; die Datenbank bleibt im Volume und wird nicht angefasst. Der Dienst ist währenddessen einige Sekunden nicht erreichbar.
+
+**Zurückrollen** auf einen früheren Stand:
+
+```bash
+git log --oneline -10        # Ziel-Commit suchen
+git checkout <commit>
+docker compose --profile tunnel up -d --build
+```
+
+> [!NOTE]
+> Ein Rückschritt auf einen Stand vor Version 3.0.0 ist mit der bestehenden Datenbank verträglich: neue Spalten wie `stop_name_norm` stören ältere Abfragen nicht. Umgekehrt ergänzt der aktuelle Stand fehlende Spalten selbst, sobald der Fahrplan das nächste Mal neu aufgebaut wird.
+
+## Datenbestand wiederherstellen
+
+Es gibt keine Sicherung — sie wäre auch wenig sinnvoll, weil sich der gesamte Bestand aus einer öffentlichen Quelle neu aufbauen lässt. Nach einem Verlust des Volumes:
+
+```bash
+docker compose down
+docker volume create zvv-gtfs-data     # falls das Volume ganz fehlt
+docker compose --profile tunnel up -d
+docker compose logs -f gtfs            # Aufbau mitlesen, 10 bis 15 Minuten
+```
+
+Der Entrypoint erkennt am fehlenden Sentinel `.build-complete`, dass ein Erstaufbau nötig ist, und lädt den aktuellen Fahrplan.
+
+**Beschädigte Datenbank bei intaktem Volume** — etwa nach einem Absturz mitten im Import:
+
+```bash
+docker compose exec gtfs rm -f /app/zvv-data/.build-complete
+docker compose restart gtfs
+```
+
+Damit erzwingst du denselben Erstaufbau, ohne das Volume zu löschen.
 
 ## Fehlersuche
 

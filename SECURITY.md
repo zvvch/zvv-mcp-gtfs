@@ -4,7 +4,7 @@
 
 Melde Sicherheitsprobleme **nicht** über ein öffentliches Issue.
 
-Nutze stattdessen [GitHub Security Advisories](https://github.com/zvvch/zvv-mcp-gtfs/security/advisories/new) oder schreibe an <marcel@marcelrapold.com>.
+Schreibe stattdessen an <marcel@marcelrapold.com>. Falls im Repository die private Meldung über [Security Advisories](https://github.com/zvvch/zvv-mcp-gtfs/security/advisories) aktiviert ist, funktioniert auch dieser Weg.
 
 Du erhältst innerhalb von fünf Werktagen eine Rückmeldung. Bitte gib an:
 
