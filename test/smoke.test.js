@@ -621,6 +621,158 @@ describe('Auth-Middleware', () => {
 });
 
 // ============================================================
+// 5d. OAuth 2.1 mit PKCE
+// ============================================================
+describe('OAuth', () => {
+  let server, baseUrl;
+  const PIN = 'test-secret-token-123';
+  const REDIRECT = 'http://localhost:9999/callback';
+  const nodeCrypto = require('node:crypto');
+
+  before(async () => {
+    if (!fs.existsSync(TEST_DB_PATH)) {
+      const { importGTFS } = require('../import-gtfs.js');
+      await importGTFS(TEST_DB_PATH, FIXTURES_DIR);
+    }
+    process.env.GTFS_DB_PATH = TEST_DB_PATH;
+    process.env.MCP_AUTH_TOKEN = PIN;
+    delete require.cache[require.resolve('../server.js')];
+    const { createApp } = require('../server.js');
+    const app = createApp();
+    await new Promise(r => { server = app.listen(0, () => { baseUrl = `http://localhost:${server.address().port}`; r(); }); });
+  });
+
+  after(async () => {
+    if (server) await new Promise(r => server.close(r));
+    delete process.env.MCP_AUTH_TOKEN;
+    delete process.env.GTFS_DB_PATH;
+    delete require.cache[require.resolve('../server.js')];
+  });
+
+  const form = (o) => new URLSearchParams(o).toString();
+
+  /** Registrierung + PKCE-Paar + Code, als Baustein fuer die Tests */
+  async function authorizeUpToCode() {
+    const reg = await fetch(`${baseUrl}/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'Test' }),
+    });
+    const { client_id } = await reg.json();
+    const verifier = nodeCrypto.randomBytes(32).toString('base64url');
+    const challenge = nodeCrypto.createHash('sha256').update(verifier).digest('base64url');
+    const q = {
+      response_type: 'code', client_id, redirect_uri: REDIRECT,
+      code_challenge: challenge, code_challenge_method: 'S256', state: 's1',
+    };
+    const res = await fetch(`${baseUrl}/authorize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form({ ...q, pin: PIN }), redirect: 'manual',
+    });
+    const loc = new URL(res.headers.get('location'), baseUrl);
+    return { client_id, verifier, code: loc.searchParams.get('code'), state: loc.searchParams.get('state') };
+  }
+
+  it('liefert Protected Resource Metadata mit authorization_servers', async () => {
+    const r = await fetch(`${baseUrl}/.well-known/oauth-protected-resource`);
+    const b = await r.json();
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(b.authorization_servers) && b.authorization_servers.length);
+    assert.match(b.resource, /\/mcp-admin$/);
+  });
+
+  it('liefert AS-Metadata und verlangt PKCE S256', async () => {
+    const b = await (await fetch(`${baseUrl}/.well-known/oauth-authorization-server`)).json();
+    assert.deepEqual(b.code_challenge_methods_supported, ['S256']);
+    assert.ok(b.grant_types_supported.includes('authorization_code'));
+    assert.ok(b.grant_types_supported.includes('refresh_token'));
+  });
+
+  it('401 auf /mcp-admin verweist auf die Ressourcen-Metadaten', async () => {
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 401);
+    assert.match(r.headers.get('www-authenticate') || '', /resource_metadata=/);
+  });
+
+  it('kompletter Fluss: Registrierung, Code, Token, Zugriff', async () => {
+    const { client_id, verifier, code, state } = await authorizeUpToCode();
+    assert.equal(state, 's1');
+    assert.ok(code);
+
+    const tok = await (await fetch(`${baseUrl}/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: verifier, client_id }),
+    })).json();
+    assert.ok(tok.access_token && tok.refresh_token);
+    assert.equal(tok.token_type, 'Bearer');
+
+    const call = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${tok.access_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(call.status, 200);
+    const txt = await call.text();
+    const tools = JSON.parse((txt.split('\n').find(l => l.startsWith('data:')) || txt).replace(/^data:\s*/, '')).result.tools;
+    assert.ok(tools.some(t => t.name === 'query_gtfs'));
+  });
+
+  it('weist einen falschen PKCE-Verifier ab', async () => {
+    const { client_id, code } = await authorizeUpToCode();
+    const r = await fetch(`${baseUrl}/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: 'falsch', client_id }),
+    });
+    assert.equal(r.status, 400);
+    assert.equal((await r.json()).error, 'invalid_grant');
+  });
+
+  it('laesst einen Code nur EINMAL einloesen', async () => {
+    const { client_id, verifier, code } = await authorizeUpToCode();
+    const body = form({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: verifier, client_id });
+    const h = { 'Content-Type': 'application/x-www-form-urlencoded' };
+    assert.equal((await fetch(`${baseUrl}/token`, { method: 'POST', headers: h, body })).status, 200);
+    assert.equal((await fetch(`${baseUrl}/token`, { method: 'POST', headers: h, body })).status, 400);
+  });
+
+  it('weist ein nicht registriertes redirect_uri ab (kein offener Redirect)', async () => {
+    const reg = await (await fetch(`${baseUrl}/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT] }),
+    })).json();
+    const r = await fetch(`${baseUrl}/authorize?` + form({
+      response_type: 'code', client_id: reg.client_id, redirect_uri: 'https://boese.example/klau',
+      code_challenge: 'x'.repeat(43), code_challenge_method: 'S256',
+    }), { redirect: 'manual' });
+    assert.equal(r.status, 400);
+  });
+
+  it('akzeptiert ein Refresh-Token NICHT als Access-Token (Typtrennung)', async () => {
+    const { client_id, verifier, code } = await authorizeUpToCode();
+    const tok = await (await fetch(`${baseUrl}/token`, {
+      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: verifier, client_id }),
+    })).json();
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${tok.refresh_token}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 401);
+  });
+
+  it('/mcp bleibt trotz OAuth anonym erreichbar', async () => {
+    const r = await fetch(`${baseUrl}/mcp`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 200);
+  });
+});
+
+// ============================================================
 // 6. Download-Script Tests (ohne tatsächlichen Download)
 // ============================================================
 describe('Download-Script', () => {

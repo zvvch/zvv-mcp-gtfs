@@ -19,7 +19,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY --from=build /app/node_modules ./node_modules
-COPY package.json server.js mcp-tools.js download-gtfs.js import-gtfs.js check-update.js ./
+COPY package.json server.js mcp-tools.js oauth.js download-gtfs.js import-gtfs.js check-update.js ./
 COPY public ./public
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 

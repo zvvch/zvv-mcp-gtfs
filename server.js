@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { registerTools } = require('./mcp-tools.js');
+const oauth = require('./oauth.js');
 
 // --- Konfiguration ---
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -466,6 +467,26 @@ function readCookie(req, name) {
   return null;
 }
 
+/**
+ * Bucht einen Fehlversuch fuer eine IP und sperrt sie ggf.
+ * Zentral, damit alle Anmeldewege (Header, /api/login, /authorize) in
+ * denselben Zaehler laufen -- sonst waere jeder neue Weg ein Schlupfloch.
+ */
+function noteAuthFailure(ip, now) {
+  const rec = authFailures.get(ip);
+  const expired = rec && rec.until > 0 && rec.until <= now;
+  const cur = (!rec || expired) ? { count: 0, until: 0 } : rec;
+  cur.count += 1;
+  if (cur.count >= MAX_FAILS) {
+    cur.until = now + LOCK_MS;
+    cur.count = 0;
+    console.warn(`[Auth] IP ${ip} nach ${MAX_FAILS} Fehlversuchen fuer ${LOCK_MS / 60000} min gesperrt.`);
+  }
+  authFailures.set(ip, cur);
+  pruneAuthFailures(now);
+  noteGlobalFail(now);
+}
+
 /** Haelt die Map klein, falls sie durch verteilte Versuche volllaeuft */
 function pruneAuthFailures(now) {
   if (authFailures.size < MAX_TRACKED_IPS) return;
@@ -504,8 +525,17 @@ function requireAuth(req, res, next) {
   const header = req.get('authorization') || '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
 
+  // Der PIN direkt als Bearer -- bequem fuer CLI-Clients.
   if (provided && safeEqual(provided, AUTH_TOKEN)) {
     authFailures.delete(ip); // sauberer Zugriff setzt den Zaehler zurueck
+    return next();
+  }
+
+  // Oder ein per OAuth ausgestelltes Access-Token. Die Typtrennung in
+  // oauth.verify stellt sicher, dass hier kein Session-Cookie oder
+  // Refresh-Token durchrutscht, obwohl alle dasselbe Secret nutzen.
+  if (provided && oauth.verify(AUTH_TOKEN, 't', provided)) {
+    authFailures.delete(ip);
     return next();
   }
 
@@ -529,10 +559,255 @@ function requireAuth(req, res, next) {
     return res.status(429).json({ error: 'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.' });
   }
 
-  res.set('WWW-Authenticate', 'Bearer');
+  // Der Verweis auf die Ressourcen-Metadaten ist der Einstieg in den
+  // OAuth-Fluss: daran erkennt ein Client, wo er sich anmelden kann.
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  const meta = `${proto}://${req.get('host')}/.well-known/oauth-protected-resource`;
+  res.set('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${meta}"`);
   res.status(401).json({
     error: 'Nicht autorisiert.',
-    hint: 'Header "Authorization: Bearer <MCP_AUTH_TOKEN>" erforderlich.'
+    hint: 'Entweder "Authorization: Bearer <PIN>" oder ein per OAuth ausgestelltes Access-Token.'
+  });
+}
+
+// --- OAuth 2.1 mit PKCE fuer /mcp-admin ---
+//
+// Der Server ist zugleich Resource Server und Authorization Server. Das ist
+// fuer ein Einzelnutzer-Setup angemessen und haelt den Betrieb einfach:
+// alle Artefakte sind HMAC-signiert und zustandslos (siehe oauth.js).
+//
+// Der oeffentliche /mcp bleibt davon voellig unberuehrt und anonym.
+
+const usedCodes = oauth.createUsedCodeStore();
+
+/** Basis-URL, wie der Client sie sieht (hinter dem Tunnel via Forwarded-Header) */
+function baseUrl(req) {
+  const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+  return `${proto}://${req.get('host')}`;
+}
+
+/** Metadaten der geschuetzten Ressource (RFC 9728) */
+function protectedResourceMetadata(req) {
+  const base = baseUrl(req);
+  return {
+    resource: `${base}/mcp-admin`,
+    authorization_servers: [base],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['gtfs:read', 'gtfs:query'],
+    resource_documentation: `${base}/`,
+  };
+}
+
+/** Metadaten des Authorization Servers (RFC 8414) */
+function authServerMetadata(req) {
+  const base = baseUrl(req);
+  return {
+    issuer: base,
+    authorization_endpoint: `${base}/authorize`,
+    token_endpoint: `${base}/token`,
+    registration_endpoint: `${base}/register`,
+    scopes_supported: ['gtfs:read', 'gtfs:query'],
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    // PKCE ist in OAuth 2.1 Pflicht; wir verlangen S256.
+    code_challenge_methods_supported: ['S256'],
+    token_endpoint_auth_methods_supported: ['none'],
+  };
+}
+
+/** Seite zur PIN-Eingabe im Autorisierungsschritt */
+function authorizePage(params, fehler) {
+  const hidden = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null && v !== '')
+    .map(([k, v]) => `<input type="hidden" name="${k}" value="${String(v).replace(/"/g, '&quot;')}">`)
+    .join('\n      ');
+  return `<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZVV GTFS – Zugriff erlauben</title>
+<style>
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+       background:#0d0f14;color:#e7eaf0;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+  .box{background:#14161c;border:1px solid #2a2f3a;border-radius:12px;padding:30px;width:min(430px,92vw)}
+  h1{font-size:18px;margin:0 0 6px}
+  p{color:#8b93a5;font-size:13px;margin:0 0 18px}
+  .app{color:#6ea8fe;font-weight:600}
+  input[type=password]{width:100%;box-sizing:border-box;padding:12px 14px;font-size:20px;
+       letter-spacing:.22em;text-align:center;border-radius:8px;border:1px solid #2a2f3a;
+       background:#0d0f14;color:#e7eaf0;outline:none}
+  input[type=password]:focus{border-color:#6ea8fe}
+  button{width:100%;margin-top:16px;padding:11px;border-radius:8px;border:0;
+       background:#6ea8fe;color:#0b0d12;font-size:15px;font-weight:600;cursor:pointer}
+  .err{background:#3b1219;border:1px solid #7f1d2e;color:#fda4af;padding:9px 12px;
+       border-radius:8px;font-size:13px;margin-bottom:14px}
+  .scope{background:#0d0f14;border:1px solid #2a2f3a;border-radius:8px;padding:10px 12px;
+       font-size:12px;color:#8b93a5;margin-bottom:16px}
+</style></head><body>
+  <form class="box" method="POST" action="/authorize">
+    <h1>Zugriff erlauben</h1>
+    <p><span class="app">${String(params.client_name || 'Eine Anwendung')}</span> möchte auf die ZVV-GTFS-Fahrplandaten zugreifen.</p>
+    ${fehler ? `<div class="err">${fehler}</div>` : ''}
+    <div class="scope">Erlaubt werden: Fahrplanabfragen und freie SQL-Abfragen (nur lesend).</div>
+    ${hidden}
+    <input type="password" name="pin" inputmode="numeric" placeholder="PIN" autofocus aria-label="PIN">
+    <button type="submit">Zugriff erlauben</button>
+  </form>
+</body></html>`;
+}
+
+function mountOAuth(app) {
+  const form = express.urlencoded({ extended: false });
+
+  // --- Discovery ---
+  // Beide Pfadvarianten bedienen: RFC 9728 haengt den Ressourcenpfad an,
+  // manche Clients fragen aber die blanke Wurzel ab.
+  const prm = (req, res) => res.json(protectedResourceMetadata(req));
+  app.get('/.well-known/oauth-protected-resource', prm);
+  app.get('/.well-known/oauth-protected-resource/mcp-admin', prm);
+  app.get('/.well-known/oauth-protected-resource/mcp', prm);
+
+  const asm = (req, res) => res.json(authServerMetadata(req));
+  app.get('/.well-known/oauth-authorization-server', asm);
+  app.get('/.well-known/oauth-authorization-server/mcp-admin', asm);
+
+  // --- Dynamic Client Registration (RFC 7591) ---
+  // Zustandslos: die client_id IST die signierte Registrierung. Damit
+  // ueberlebt sie Neustarts, ohne dass etwas gespeichert werden muss.
+  app.post('/register', express.json(), (req, res) => {
+    const body = req.body || {};
+    const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
+    if (!redirectUris.length) {
+      return res.status(400).json({ error: 'invalid_redirect_uri', error_description: 'redirect_uris fehlt.' });
+    }
+    for (const u of redirectUris) {
+      // Nur absolute http(s)- oder benutzerdefinierte Schemata (Desktop-Clients).
+      if (typeof u !== 'string' || !/^[a-z][a-z0-9+.-]*:/i.test(u)) {
+        return res.status(400).json({ error: 'invalid_redirect_uri', error_description: `Ungueltige redirect_uri: ${u}` });
+      }
+    }
+    const client_id = oauth.sign(AUTH_TOKEN || 'unset', 'c', {
+      u: redirectUris,
+      n: String(body.client_name || 'MCP Client').slice(0, 80),
+      exp: Date.now() + oauth.CLIENT_TTL_S * 1000,
+    });
+    res.status(201).json({
+      client_id,
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+      redirect_uris: redirectUris,
+      client_name: body.client_name || 'MCP Client',
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    });
+  });
+
+  /** Gemeinsame Pruefung der Autorisierungsanfrage */
+  function checkAuthorizeRequest(q) {
+    const client = oauth.verify(AUTH_TOKEN || 'unset', 'c', q.client_id);
+    if (!client) return { err: 'invalid_client', desc: 'client_id unbekannt oder abgelaufen.' };
+    if (q.response_type !== 'code') return { err: 'unsupported_response_type', desc: 'Nur response_type=code.' };
+    if (!q.redirect_uri || !client.u.includes(q.redirect_uri)) {
+      // Bewusst KEIN Redirect: eine nicht registrierte Adresse darf nicht
+      // angesteuert werden, sonst waere das ein offener Redirect.
+      return { err: 'invalid_redirect_uri', desc: 'redirect_uri ist fuer diesen Client nicht registriert.' };
+    }
+    if (!q.code_challenge) return { err: 'invalid_request', desc: 'code_challenge fehlt (PKCE ist Pflicht).' };
+    if ((q.code_challenge_method || 'plain') !== 'S256') {
+      return { err: 'invalid_request', desc: 'Nur code_challenge_method=S256.' };
+    }
+    return { client };
+  }
+
+  // --- Autorisierung: Formular anzeigen ---
+  app.get('/authorize', (req, res) => {
+    const q = req.query;
+    const chk = checkAuthorizeRequest(q);
+    if (chk.err) return res.status(400).json({ error: chk.err, error_description: chk.desc });
+    res.type('html').send(authorizePage({
+      client_id: q.client_id, redirect_uri: q.redirect_uri, state: q.state,
+      code_challenge: q.code_challenge, code_challenge_method: q.code_challenge_method,
+      scope: q.scope, resource: q.resource, client_name: chk.client.n,
+    }, null));
+  });
+
+  // --- Autorisierung: PIN pruefen und Code ausstellen ---
+  app.post('/authorize', form, (req, res) => {
+    const q = req.body || {};
+    const chk = checkAuthorizeRequest(q);
+    if (chk.err) return res.status(400).json({ error: chk.err, error_description: chk.desc });
+
+    const ip = clientIp(req);
+    const now = Date.now();
+    const rec = authFailures.get(ip);
+    if ((rec && rec.until > now) || globallyThrottled(now)) {
+      return res.status(429).type('html').send(authorizePage(
+        { ...q, client_name: chk.client.n },
+        'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.'
+      ));
+    }
+
+    if (!AUTH_TOKEN || !oauth.safeEqual(String(q.pin || ''), AUTH_TOKEN)) {
+      // Fehlversuche laufen in dieselbe Sperre wie ueberall sonst.
+      noteAuthFailure(ip, now);
+      return res.status(401).type('html').send(authorizePage(
+        { ...q, client_name: chk.client.n }, 'Falscher PIN.'
+      ));
+    }
+    authFailures.delete(ip);
+
+    const code = oauth.sign(AUTH_TOKEN, 'a', {
+      r: q.redirect_uri,
+      cc: q.code_challenge,
+      res: q.resource || null,
+      sc: q.scope || 'gtfs:read gtfs:query',
+      j: crypto.randomBytes(9).toString('base64url'),   // fuer die Einmalverwendung
+      exp: now + oauth.CODE_TTL_MS,
+    });
+
+    const to = new URL(q.redirect_uri);
+    to.searchParams.set('code', code);
+    if (q.state) to.searchParams.set('state', q.state);
+    res.redirect(302, to.toString());
+  });
+
+  // --- Token-Ausgabe ---
+  app.post('/token', form, express.json(), (req, res) => {
+    const b = req.body || {};
+    const issue = (scope, resource) => {
+      const exp = Date.now() + oauth.ACCESS_TTL_S * 1000;
+      return {
+        access_token: oauth.sign(AUTH_TOKEN, 't', { sc: scope, res: resource || null, exp }),
+        token_type: 'Bearer',
+        expires_in: oauth.ACCESS_TTL_S,
+        scope,
+        refresh_token: oauth.sign(AUTH_TOKEN, 'r', {
+          sc: scope, res: resource || null, exp: Date.now() + oauth.REFRESH_TTL_S * 1000,
+        }),
+      };
+    };
+
+    if (b.grant_type === 'authorization_code') {
+      const code = oauth.verify(AUTH_TOKEN || 'unset', 'a', b.code);
+      if (!code) return res.status(400).json({ error: 'invalid_grant', error_description: 'Code ungueltig oder abgelaufen.' });
+      if (code.r !== b.redirect_uri) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri stimmt nicht mit der Autorisierung ueberein.' });
+      }
+      if (!oauth.pkceMatches(b.code_verifier, code.cc, 'S256')) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE-Pruefung fehlgeschlagen.' });
+      }
+      // Ein Code gilt genau einmal.
+      if (usedCodes.seen(code.j, code.exp)) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'Code wurde bereits eingeloest.' });
+      }
+      return res.json(issue(code.sc, code.res));
+    }
+
+    if (b.grant_type === 'refresh_token') {
+      const rt = oauth.verify(AUTH_TOKEN || 'unset', 'r', b.refresh_token);
+      if (!rt) return res.status(400).json({ error: 'invalid_grant', error_description: 'Refresh-Token ungueltig oder abgelaufen.' });
+      return res.json(issue(rt.sc, rt.res));
+    }
+
+    res.status(400).json({ error: 'unsupported_grant_type' });
   });
 }
 
@@ -619,6 +894,8 @@ function createApp() {
       error: 'Method Not Allowed. Server läuft im Stateless-Modus.'
     });
   });
+
+  mountOAuth(app);
 
   // Anmeldung fuer das Frontend: PIN gegen ein langlebiges Session-Cookie
   // tauschen, damit er nicht bei jedem Aufruf neu eingegeben werden muss.
