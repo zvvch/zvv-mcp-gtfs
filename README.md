@@ -93,6 +93,37 @@ curl -X POST https://dein-host/api/query \
 
 Die Web-UI fragt bei der ersten 401-Antwort danach und merkt es sich im Browser.
 
+## Als MCP-Server einbinden
+
+### Claude Code -- ein Befehl
+
+```bash
+claude mcp add --transport http zvv-gtfs https://gtfs.zvv.dev/mcp --header "Authorization: Bearer DEIN_PIN"
+```
+
+Prüfen mit `claude mcp list` -- der Server sollte als `✔ Connected` erscheinen. Mit `-s user` gilt er für alle Projekte statt nur für das aktuelle.
+
+### Claude Desktop / claude.ai
+
+Unter *Einstellungen → Connectors → Custom Connector* die URL `https://gtfs.zvv.dev/mcp` eintragen. Achtung: die Connector-Oberfläche kennt nur *keine Authentifizierung* oder *OAuth* -- ein statischer Bearer-Header lässt sich dort nicht hinterlegen. Für einen PIN-geschützten Server ist deshalb der Weg über Claude Code oder ein lokaler Proxy (`mcp-remote`) nötig.
+
+### Andere Clients
+
+Der Endpunkt ist ein regulärer MCP-Server über StreamableHTTP:
+
+| | |
+|---|---|
+| Endpoint | `POST https://gtfs.zvv.dev/mcp` |
+| Transport | StreamableHTTP (stateless) |
+| Auth | `Authorization: Bearer <PIN>` |
+| Accept | `application/json, text/event-stream` |
+
+Schnelltest:
+
+```bash
+curl -X POST https://gtfs.zvv.dev/mcp -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -H "Authorization: Bearer DEIN_PIN" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
 ## MCP-Tools
 
 | Tool | Beschreibung | Parameter |
