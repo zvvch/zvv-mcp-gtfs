@@ -680,6 +680,35 @@ const LOCK_MS = 15 * 60 * 1000;
 const MAX_TRACKED_IPS = 10000;
 const authFailures = new Map();
 
+// Zusaetzlich eine GLOBALE Bremse. Die IP-Sperre allein laesst sich durch
+// Rotieren der Quell-IP umgehen -- bei einem kurzen PIN waere der Raum damit
+// in Stunden durchprobiert. Diese Schranke gilt unabhaengig von der Herkunft.
+const GLOBAL_MAX_FAILS = 30;
+const GLOBAL_WINDOW_MS = 15 * 60 * 1000;
+let globalFails = 0;
+let globalWindowStart = 0;
+
+/** true, wenn insgesamt zu viele Fehlversuche im laufenden Fenster liegen */
+function globallyThrottled(now) {
+  if (now - globalWindowStart > GLOBAL_WINDOW_MS) {
+    globalWindowStart = now;
+    globalFails = 0;
+    return false;
+  }
+  return globalFails >= GLOBAL_MAX_FAILS;
+}
+
+function noteGlobalFail(now) {
+  if (now - globalWindowStart > GLOBAL_WINDOW_MS) {
+    globalWindowStart = now;
+    globalFails = 0;
+  }
+  globalFails += 1;
+  if (globalFails === GLOBAL_MAX_FAILS) {
+    console.warn(`[Auth] Globale Bremse aktiv: ${GLOBAL_MAX_FAILS} Fehlversuche in ${GLOBAL_WINDOW_MS / 60000} min.`);
+  }
+}
+
 /** Echte Client-IP -- hinter dem Cloudflare-Tunnel steht sie im Header */
 function clientIp(req) {
   return req.get('cf-connecting-ip') || req.ip || 'unknown';
@@ -751,6 +780,10 @@ function requireAuth(req, res, next) {
     });
   }
 
+  // Globale Bremse -- greift auch, wenn die Versuche ueber viele IPs streuen.
+  // Eine gueltige Session/ein gueltiger Token kommt weiter unten trotzdem durch.
+  const throttled = globallyThrottled(now);
+
   // Gueltige Browser-Session? Dann kein PIN noetig.
   if (verifySession(readCookie(req, SESSION_COOKIE))) {
     authFailures.delete(ip);
@@ -778,6 +811,12 @@ function requireAuth(req, res, next) {
   }
   authFailures.set(ip, cur);
   pruneAuthFailures(now);
+  noteGlobalFail(now);
+
+  if (throttled) {
+    res.set('Retry-After', '900');
+    return res.status(429).json({ error: 'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.' });
+  }
 
   res.set('WWW-Authenticate', 'Bearer');
   res.status(401).json({
@@ -870,8 +909,14 @@ function createApp() {
       return res.status(429).json({ error: 'Zu viele Fehlversuche.', retry_after_seconds: wait });
     }
 
+    if (globallyThrottled(now)) {
+      res.set('Retry-After', '900');
+      return res.status(429).json({ error: 'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.' });
+    }
+
     const pin = (req.body && req.body.pin) ? String(req.body.pin) : '';
     if (!pin || !safeEqual(pin, AUTH_TOKEN)) {
+      noteGlobalFail(now);
       // Fehlversuche zaehlen wie bei requireAuth -- sonst waere /api/login
       // ein Schlupfloch am Brute-Force-Schutz vorbei.
       const expired = rec && rec.until > 0 && rec.until <= now;
@@ -896,6 +941,15 @@ function createApp() {
     if (secure) parts.push('Secure');
     res.set('Set-Cookie', parts.join('; '));
     res.json({ ok: true, valid_days: SESSION_MAX_AGE_S / 86400 });
+  });
+
+  // Anmeldestatus fuer das Frontend: erlaubt es, die Oberflaeche schon beim
+  // Laden zu sperren, statt erst beim ersten fehlgeschlagenen Aufruf.
+  app.get('/api/session', (req, res) => {
+    res.json({
+      protected: !!AUTH_TOKEN,
+      authenticated: !AUTH_TOKEN || verifySession(readCookie(req, SESSION_COOKIE))
+    });
   });
 
   /** Abmelden: Session-Cookie loeschen */

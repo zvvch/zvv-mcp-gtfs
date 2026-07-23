@@ -858,6 +858,12 @@
     #stops-result tbody tr:hover { background: rgba(110,168,254,.10); }
     #stops-result tbody tr.active { background: rgba(110,168,254,.18); outline: 1px solid var(--accent, #6ea8fe); }
 
+    /* Gesperrt: Inhalt unkenntlich, bis der PIN stimmt. */
+    body.locked .app { filter: blur(7px); pointer-events: none; user-select: none; }
+    /* Dialog-Buttons ausblenden, solange die Seite gesperrt ist -- ein
+       "Abbrechen" waere hier sinnlos, es gibt kein Weiter ohne PIN. */
+    body.locked #token-cancel { display: none; }
+
     /* --- PIN-Dialog --- */
     #token-overlay {
       display: none; position: fixed; inset: 0; z-index: 9999;
@@ -1486,6 +1492,37 @@ fetch('/api/query', {
       await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
       location.reload();
     }
+
+    // --- Zugangssperre beim Seitenaufruf ---
+    // Die Oberflaeche bleibt verdeckt, bis der PIN stimmt. Ohne das waere die
+    // Seite zwar datenlos, aber sichtbar -- und der Dialog erschiene erst beim
+    // ersten fehlschlagenden Aufruf.
+    async function enforceLogin() {
+      let state;
+      try {
+        const res = await fetch('/api/session', { credentials: 'same-origin' });
+        state = await res.json();
+      } catch {
+        return; // Server nicht erreichbar -- der normale Fehlerpfad greift
+      }
+      if (!state.protected || state.authenticated) {
+        document.body.classList.remove('locked');
+        return;
+      }
+
+      document.body.classList.add('locked');
+      // Solange fragen, bis der PIN stimmt. Ohne Anmeldung geht es nicht weiter.
+      for (;;) {
+        const pin = await askForToken('Zugang zum ZVV GTFS Explorer. Bitte PIN eingeben.');
+        if (pin && await login(pin)) {
+          document.body.classList.remove('locked');
+          return;
+        }
+        await new Promise(r => setTimeout(r, 250));
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', enforceLogin);
 
     async function apiCall(endpoint) {
       const res = await withAuthRetry(() => fetch(endpoint, {
