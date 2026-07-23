@@ -664,6 +664,47 @@ function clientIp(req) {
   return req.get('cf-connecting-ip') || req.ip || 'unknown';
 }
 
+// --- Browser-Session ---
+// Damit der PIN nur EINMAL eingegeben werden muss, stellt der Server nach
+// erfolgreicher Anmeldung ein signiertes HttpOnly-Cookie aus. Es ist
+// zustandslos: der Ablaufzeitpunkt steckt drin und ist per HMAC signiert,
+// es braucht also keinen Session-Speicher. MCP-Clients nutzen weiterhin
+// den Bearer-Header und sind davon unberuehrt.
+const SESSION_COOKIE = 'gtfs_session';
+const SESSION_MAX_AGE_S = 30 * 24 * 3600;
+
+function signSession(expMs) {
+  const payload = String(expMs);
+  const sig = crypto.createHmac('sha256', AUTH_TOKEN).update(payload).digest('hex');
+  return `${payload}.${sig}`;
+}
+
+function verifySession(value) {
+  if (!value) return false;
+  const i = value.lastIndexOf('.');
+  if (i < 1) return false;
+  const payload = value.slice(0, i);
+  const sig = value.slice(i + 1);
+  const expected = crypto.createHmac('sha256', AUTH_TOKEN).update(payload).digest('hex');
+  if (!safeEqual(sig, expected)) return false;
+  const exp = Number(payload);
+  return Number.isFinite(exp) && exp > Date.now();
+}
+
+/** Liest ein einzelnes Cookie aus dem Request (ohne Zusatzabhaengigkeit) */
+function readCookie(req, name) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx < 0) continue;
+    if (part.slice(0, idx).trim() === name) {
+      return decodeURIComponent(part.slice(idx + 1).trim());
+    }
+  }
+  return null;
+}
+
 /** Haelt die Map klein, falls sie durch verteilte Versuche volllaeuft */
 function pruneAuthFailures(now) {
   if (authFailures.size < MAX_TRACKED_IPS) return;
@@ -687,6 +728,12 @@ function requireAuth(req, res, next) {
       error: 'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.',
       retry_after_seconds: wait
     });
+  }
+
+  // Gueltige Browser-Session? Dann kein PIN noetig.
+  if (verifySession(readCookie(req, SESSION_COOKIE))) {
+    authFailures.delete(ip);
+    return next();
   }
 
   const header = req.get('authorization') || '';
@@ -784,6 +831,56 @@ function createApp() {
     res.status(405).json({
       error: 'Method Not Allowed. Server läuft im Stateless-Modus.'
     });
+  });
+
+  // Anmeldung fuer das Frontend: PIN gegen ein langlebiges Session-Cookie
+  // tauschen, damit er nicht bei jedem Aufruf neu eingegeben werden muss.
+  app.post('/api/login', express.json(), (req, res) => {
+    if (!AUTH_TOKEN) {
+      return res.json({ ok: true, note: 'Server laeuft ohne PIN-Schutz.' });
+    }
+
+    const ip = clientIp(req);
+    const now = Date.now();
+    const rec = authFailures.get(ip);
+    if (rec && rec.until > now) {
+      const wait = Math.ceil((rec.until - now) / 1000);
+      res.set('Retry-After', String(wait));
+      return res.status(429).json({ error: 'Zu viele Fehlversuche.', retry_after_seconds: wait });
+    }
+
+    const pin = (req.body && req.body.pin) ? String(req.body.pin) : '';
+    if (!pin || !safeEqual(pin, AUTH_TOKEN)) {
+      // Fehlversuche zaehlen wie bei requireAuth -- sonst waere /api/login
+      // ein Schlupfloch am Brute-Force-Schutz vorbei.
+      const expired = rec && rec.until > 0 && rec.until <= now;
+      const cur = (!rec || expired) ? { count: 0, until: 0 } : rec;
+      cur.count += 1;
+      if (cur.count >= MAX_FAILS) {
+        cur.until = now + LOCK_MS;
+        cur.count = 0;
+        console.warn(`[Auth] IP ${ip} nach ${MAX_FAILS} Fehlversuchen fuer ${LOCK_MS / 60000} min gesperrt.`);
+      }
+      authFailures.set(ip, cur);
+      pruneAuthFailures(now);
+      return res.status(401).json({ error: 'Falscher PIN.' });
+    }
+
+    authFailures.delete(ip);
+    const secure = req.secure || req.get('x-forwarded-proto') === 'https';
+    const parts = [
+      `${SESSION_COOKIE}=${encodeURIComponent(signSession(now + SESSION_MAX_AGE_S * 1000))}`,
+      'HttpOnly', 'Path=/', 'SameSite=Lax', `Max-Age=${SESSION_MAX_AGE_S}`
+    ];
+    if (secure) parts.push('Secure');
+    res.set('Set-Cookie', parts.join('; '));
+    res.json({ ok: true, valid_days: SESSION_MAX_AGE_S / 86400 });
+  });
+
+  /** Abmelden: Session-Cookie loeschen */
+  app.post('/api/logout', (req, res) => {
+    res.set('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
+    res.json({ ok: true });
   });
 
   // REST API für Frontend - SQL-Query Endpoint

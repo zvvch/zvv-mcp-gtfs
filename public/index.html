@@ -1393,12 +1393,15 @@ fetch('/api/query', {
     });
 
     // --- API Helper ---
-    // Nur noetig, wenn der Server mit gesetztem MCP_AUTH_TOKEN laeuft.
-    let apiToken = localStorage.getItem('gtfs_token') || '';
-
+    // Die Anmeldung laeuft ueber ein HttpOnly-Session-Cookie, das der Server
+    // nach einmaliger PIN-Eingabe ausstellt (30 Tage gueltig). Der PIN selbst
+    // wird NICHT im Browser gespeichert.
     function authHeaders(base = {}) {
-      return apiToken ? { ...base, 'Authorization': `Bearer ${apiToken}` } : base;
+      return base;
     }
+
+    // Alt-Bestand aus der localStorage-Zeit aufraeumen.
+    try { localStorage.removeItem('gtfs_token'); } catch {}
 
     // Token-Dialog: eine eigene Overlay-Maske statt des rohen prompt().
     // Aufloesung erfolgt, sobald der Nutzer speichert oder abbricht.
@@ -1431,39 +1434,52 @@ fetch('/api/query', {
     // Verhindert, dass mehrere parallele 401er mehrere Dialoge oeffnen.
     let tokenPending = null;
 
-    // Bei 401 nach dem Token fragen und die Anfrage wiederholen.
+    /** PIN gegen ein Session-Cookie tauschen. Gibt true bei Erfolg. */
+    async function login(pin) {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ pin })
+      });
+      return res.ok;
+    }
+
+    // Bei 401 einmal nach dem PIN fragen, anmelden und die Anfrage wiederholen.
     async function withAuthRetry(doFetch) {
       const res = await doFetch();
       if (res.status !== 401) return res;
 
-      // Ein gespeicherter, aber abgelehnter PIN muss weg -- sonst schlaegt
-      // jede weitere Anfrage still fehl (z.B. nach einem PIN-Wechsel).
-      if (apiToken) {
-        apiToken = '';
-        localStorage.removeItem('gtfs_token');
-      }
-
       if (!tokenPending) {
-        tokenPending = askForToken('Dieser Server ist geschützt. Bitte den PIN eingeben — er wird lokal im Browser gespeichert.')
-          .finally(() => { setTimeout(() => { tokenPending = null; }, 0); });
+        tokenPending = (async () => {
+          // Bis zu drei Versuche, ohne den Dialog dazwischen zu schliessen.
+          for (let i = 0; i < 3; i++) {
+            const pin = await askForToken(i === 0
+              ? 'Dieser Server ist geschützt. PIN eingeben — danach bleibst du 30 Tage angemeldet.'
+              : 'PIN falsch. Bitte nochmals versuchen.');
+            if (!pin) return false;
+            if (await login(pin)) return true;
+          }
+          return false;
+        })().finally(() => { setTimeout(() => { tokenPending = null; }, 0); });
       }
-      const entered = await tokenPending;
-      if (!entered) return res;
 
-      apiToken = entered;
-      localStorage.setItem('gtfs_token', apiToken);
+      const ok = await tokenPending;
+      if (!ok) return res;
       return doFetch();
     }
 
-    /** Token vergessen -- für den Fall, dass ein falscher gespeichert wurde. */
-    function clearToken() {
-      apiToken = '';
-      localStorage.removeItem('gtfs_token');
+    /** Abmelden und Seite neu laden. */
+    async function logout() {
+      await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' });
       location.reload();
     }
 
     async function apiCall(endpoint) {
-      const res = await withAuthRetry(() => fetch(endpoint, { headers: authHeaders() }));
+      const res = await withAuthRetry(() => fetch(endpoint, {
+        headers: authHeaders(),
+        credentials: 'same-origin'
+      }));
       return res.json();
     }
 
@@ -1471,6 +1487,7 @@ fetch('/api/query', {
       const res = await withAuthRetry(() => fetch(endpoint, {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'same-origin',
         body: JSON.stringify(body)
       }));
       return res.json();

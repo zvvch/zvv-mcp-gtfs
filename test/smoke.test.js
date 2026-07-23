@@ -512,6 +512,40 @@ describe('Auth-Middleware', () => {
     assert.equal(res.status, 200);
   });
 
+  it('PIN gegen Session-Cookie tauschen -> danach kein Header mehr noetig', async () => {
+    const bad = await post('/api/login', { pin: 'falsch' }, { 'CF-Connecting-IP': '203.0.113.10' });
+    assert.equal(bad.status, 401);
+
+    const ok = await post('/api/login', { pin: TOKEN }, { 'CF-Connecting-IP': '203.0.113.10' });
+    assert.equal(ok.status, 200);
+
+    const setCookie = ok.headers['set-cookie'][0];
+    assert.match(setCookie, /gtfs_session=/);
+    assert.match(setCookie, /HttpOnly/);
+    assert.match(setCookie, /Max-Age=2592000/);
+
+    // Cookie allein muss reichen -- ohne Authorization-Header.
+    const cookie = setCookie.split(';')[0];
+    const res = await post('/api/query', { sql: 'SELECT 1 AS n' }, { Cookie: cookie });
+    assert.equal(res.status, 200);
+  });
+
+  it('weist ein manipuliertes Session-Cookie ab', async () => {
+    const res = await post('/api/query', { sql: 'SELECT 1' },
+      { Cookie: `gtfs_session=${Date.now() + 99999999}.deadbeef` });
+    assert.equal(res.status, 401);
+  });
+
+  it('weist ein abgelaufenes Session-Cookie ab', async () => {
+    // Korrekt signiert, aber in der Vergangenheit -- muss trotzdem scheitern.
+    const S = require('../server.js');
+    const crypto = require('node:crypto');
+    const past = String(Date.now() - 1000);
+    const sig = crypto.createHmac('sha256', TOKEN).update(past).digest('hex');
+    const res = await post('/api/query', { sql: 'SELECT 1' }, { Cookie: `gtfs_session=${past}.${sig}` });
+    assert.equal(res.status, 401);
+  });
+
   it('sperrt eine IP nach zu vielen Fehlversuchen (Brute-Force-Schutz)', async () => {
     // Eigene IP verwenden, damit die anderen Tests nicht betroffen sind.
     const ip = '203.0.113.77';
