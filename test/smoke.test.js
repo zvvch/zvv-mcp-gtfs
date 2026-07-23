@@ -763,6 +763,58 @@ describe('OAuth', () => {
     assert.equal(r.status, 401);
   });
 
+  it('resource_metadata im 401 zeigt auf den PFAD, nicht auf die Wurzel', async () => {
+    // RFC 9728 §3 schiebt den well-known-String zwischen Host und Pfad;
+    // §3.3 verlangt, dass das gelieferte "resource" exakt der Kennung
+    // entspricht, aus der die Abruf-URL gebildet wurde. Ein Verweis auf die
+    // Wurzel bei resource=<base>/mcp-admin muss ein strenger Client ablehnen.
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    const wa = r.headers.get('www-authenticate') || '';
+    const url = /resource_metadata="([^"]+)"/.exec(wa);
+    assert.ok(url, `resource_metadata fehlt in: ${wa}`);
+    assert.match(url[1], /\/\.well-known\/oauth-protected-resource\/mcp-admin$/);
+
+    // Und das Dokument dort muss genau diese Ressource deklarieren.
+    const doc = await (await fetch(url[1])).json();
+    assert.equal(doc.resource, `${baseUrl}/mcp-admin`);
+  });
+
+  it('nennt einen scope im WWW-Authenticate', async () => {
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.match(r.headers.get('www-authenticate') || '', /scope="/);
+  });
+
+  it('weist ein Token ab, das fuer eine ANDERE Ressource ausgestellt wurde', async () => {
+    // Audience-Pruefung nach RFC 8707: der Server muss sicherstellen, dass
+    // das Token fuer ihn bestimmt war.
+    const o = require('../oauth.js');
+    const fremd = o.sign(PIN, 't', { sc: 'gtfs:read', res: 'https://woanders.example/mcp', exp: Date.now() + 60000 });
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${fremd}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 401);
+    assert.equal((await r.json()).error, 'invalid_token');
+  });
+
+  it('akzeptiert ein Token mit passender Audience', async () => {
+    const o = require('../oauth.js');
+    const eigen = o.sign(PIN, 't', { sc: 'gtfs:read', res: `${baseUrl}/mcp-admin`, exp: Date.now() + 60000 });
+    const r = await fetch(`${baseUrl}/mcp-admin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', Authorization: `Bearer ${eigen}` },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    });
+    assert.equal(r.status, 200);
+  });
+
   it('/mcp bleibt trotz OAuth anonym erreichbar', async () => {
     const r = await fetch(`${baseUrl}/mcp`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },

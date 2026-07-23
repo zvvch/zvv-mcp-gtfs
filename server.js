@@ -534,7 +534,20 @@ function requireAuth(req, res, next) {
   // Oder ein per OAuth ausgestelltes Access-Token. Die Typtrennung in
   // oauth.verify stellt sicher, dass hier kein Session-Cookie oder
   // Refresh-Token durchrutscht, obwohl alle dasselbe Secret nutzen.
-  if (provided && oauth.verify(AUTH_TOKEN, 't', provided)) {
+  const at = provided ? oauth.verify(AUTH_TOKEN, 't', provided) : null;
+  if (at) {
+    // Audience-Pruefung (RFC 8707): ein Token, das fuer eine ANDERE
+    // Ressource ausgestellt wurde, darf hier nicht gelten. Fehlt die
+    // Angabe, weil der Client keinen resource-Parameter geschickt hat,
+    // lassen wir es zu -- das Token kann ohnehin nur von diesem Server
+    // stammen, weil nur er das Signaturgeheimnis kennt.
+    const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
+    const self = `${proto}://${req.get('host')}/mcp-admin`;
+    if (at.res && at.res !== self) {
+      res.set('WWW-Authenticate',
+        `Bearer error="invalid_token", error_description="Token wurde fuer eine andere Ressource ausgestellt"`);
+      return res.status(401).json({ error: 'invalid_token', error_description: `Token gilt fuer ${at.res}, nicht fuer ${self}.` });
+    }
     authFailures.delete(ip);
     return next();
   }
@@ -561,9 +574,16 @@ function requireAuth(req, res, next) {
 
   // Der Verweis auf die Ressourcen-Metadaten ist der Einstieg in den
   // OAuth-Fluss: daran erkennt ein Client, wo er sich anmelden kann.
+  //
+  // Der Pfad MUSS zum resource-Wert im Dokument passen. RFC 9728 §3 schiebt
+  // den well-known-String ZWISCHEN Host und Pfad, und §3.3 verlangt, dass
+  // das gelieferte "resource" exakt der Kennung entspricht, aus der die
+  // Abruf-URL gebildet wurde. Ein Verweis auf die Wurzel bei
+  // resource=<base>/mcp-admin muss ein streng pruefender Client zurueckweisen.
   const proto = req.get('x-forwarded-proto') || req.protocol || 'http';
-  const meta = `${proto}://${req.get('host')}/.well-known/oauth-protected-resource`;
-  res.set('WWW-Authenticate', `Bearer realm="mcp", resource_metadata="${meta}"`);
+  const meta = `${proto}://${req.get('host')}/.well-known/oauth-protected-resource/mcp-admin`;
+  res.set('WWW-Authenticate',
+    `Bearer realm="mcp", resource_metadata="${meta}", scope="gtfs:read gtfs:query"`);
   res.status(401).json({
     error: 'Nicht autorisiert.',
     hint: 'Entweder "Authorization: Bearer <PIN>" oder ein per OAuth ausgestelltes Access-Token.'
