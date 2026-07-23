@@ -8,6 +8,8 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { registerTools } = require('./mcp-tools.js');
 const oauth = require('./oauth.js');
+// Eine Quelle fuer die Version -- vorher standen 2.0.0 und 3.0.0 nebeneinander.
+const VERSION = require('./package.json').version;
 
 // --- Konfiguration ---
 const PORT = parseInt(process.env.PORT, 10) || 3000;
@@ -255,7 +257,7 @@ function getMeta() {
 function createMcpServer(options = {}) {
   const server = new McpServer({
     name: options.admin ? 'ZVV GTFS MCP Server (admin)' : 'ZVV GTFS MCP Server',
-    version: '3.0.0'
+    version: VERSION
   });
 
   // Die Tools liegen in mcp-tools.js. Die Abhaengigkeiten werden
@@ -846,7 +848,7 @@ function createApp() {
       res.json({
         status: 'ok',
         server: 'ZVV GTFS MCP Server',
-        version: '2.0.0',
+        version: VERSION,
         database: {
           // Absoluter Pfad bewusst nicht im Response -- /health ist auch
           // dann offen, wenn der Rest per Token geschuetzt ist.

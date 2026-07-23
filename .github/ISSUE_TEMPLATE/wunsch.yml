@@ -1,0 +1,33 @@
+name: Funktion vorschlagen
+description: Eine Idee für eine Erweiterung
+labels: ["wunsch"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Welches Problem löst der Vorschlag?
+      description: Beschreibe die Situation, nicht die Lösung. Was gelingt dir heute nicht?
+    validations:
+      required: true
+
+  - type: textarea
+    id: vorschlag
+    attributes:
+      label: Vorgeschlagene Lösung
+      description: Wie stellst du dir das vor? Falls es um ein Werkzeug geht, nenne Eingaben und erwartete Ausgabe.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativen
+    attributes:
+      label: Geprüfte Alternativen
+      description: Was hast du schon versucht? Lässt sich das Ziel mit `query_gtfs` erreichen?
+
+  - type: checkboxes
+    id: echtzeit
+    attributes:
+      label: Bestätigung
+      options:
+        - label: Mir ist bekannt, dass der Feed nur statische Fahrplandaten enthält und keine Echtzeitdaten wie Verspätungen oder Störungsmeldungen.
+          required: true

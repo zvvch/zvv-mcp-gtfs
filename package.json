@@ -1,6 +1,6 @@
 {
   "name": "mcp-gtfs",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "MCP Server für Schweizer ÖV-Fahrplandaten (GTFS) – abfragbar via AI/LLM",
   "main": "server.js",
   "scripts": {

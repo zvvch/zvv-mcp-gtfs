@@ -20,6 +20,7 @@ Zwei Compose-Services:
 | `cloudflared` | Tunnel nach aussen | zusätzlich `--profile tunnel` |
 
 ```bash
+docker volume create zvv-gtfs-data        # einmalig, siehe unten
 docker compose up -d                      # nur lokal
 docker compose --profile tunnel up -d     # mit Tunnel
 ```
@@ -28,10 +29,14 @@ Der Host-Port ist **bewusst nur auf Loopback** gebunden. Von aussen erreichbar w
 
 ### Volume
 
-Die Datenbank liegt im **externen** Volume `zvv-gtfs-data` (~5.3 GB). „Extern" heisst hier: ausserhalb des Compose-Lebenszyklus, damit ein `docker compose down -v` sie nicht mitreisst. Ein Neuaufbau kostet 10–15 Minuten.
+Datenbank und entpackte Rohdaten liegen im **externen** Volume `zvv-gtfs-data` (rund 8.8 GB). „Extern" heisst: ausserhalb des Compose-Lebenszyklus, damit ein `docker compose down -v` sie nicht mitreisst. Ein Neuaufbau kostet 10–15 Minuten.
+
+> [!IMPORTANT]
+> Der Preis dafür: Compose legt externe Volumes **nicht** an. Auf einer neuen Maschine muss das Volume einmalig von Hand entstehen, sonst bricht `docker compose up -d` ab mit `external volume "zvv-gtfs-data" not found`, bevor ein Container startet.
 
 ```bash
-docker volume inspect zvv-gtfs-data
+docker volume create zvv-gtfs-data    # einmalig, wiederholbar
+docker volume inspect zvv-gtfs-data   # prüfen
 ```
 
 ---
@@ -75,9 +80,29 @@ Zeigt ein bestehender DNS-Eintrag noch auf einen toten Origin (Symptom: **502** 
 
 Drei Dinge, damit der Dienst einen Neustart übersteht:
 
-1. **`restart: unless-stopped`** auf beiden Services
-2. **Docker-Desktop-Autostart** aktiviert (`AutoStart: true` in `%APPDATA%\Docker\settings-store.json`)
+1. **`restart: unless-stopped`** auf beiden Services — greift, sobald Docker läuft
+2. **Docker startet beim Anmelden** — siehe unten, das ist die kritische Stelle
 3. **Externes Volume**, das ein `down -v` nicht wegräumt
+
+### Docker-Autostart prüfen
+
+> [!WARNING]
+> `restart: unless-stopped` nützt nichts, wenn Docker selbst nicht startet. Auf einer Windows-Maschine ist das leicht zu übersehen: die Container gelten als „laufend", der Dienst ist aber nach jedem Neustart tot.
+
+Zwei Stellen entscheiden gemeinsam, und beide müssen stimmen:
+
+```powershell
+# 1. Docker-eigene Einstellung
+(Get-Content "$env:APPDATA\Docker\settings-store.json" -Raw | ConvertFrom-Json).AutoStart
+
+# 2. Windows-Autostart: 02 = aktiviert, 03 = deaktiviert
+$b = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run")."Docker Desktop"
+if ($b[0] -band 1) { "DEAKTIVIERT" } else { "aktiviert" }
+```
+
+Die zweite Stelle ist die wirksame. Ein Eintrag unter `Run` allein genügt nicht — der Task-Manager kann ihn abgeschaltet haben, ohne ihn zu entfernen.
+
+Am zuverlässigsten stellst du das in der Oberfläche um: *Docker Desktop → Settings → General → „Start Docker Desktop when you sign in"*. Das setzt beide Werte konsistent. Ein direktes Schreiben in `settings-store.json` wird von Docker Desktop beim Beenden überschrieben.
 
 ---
 
@@ -85,12 +110,13 @@ Drei Dinge, damit der Dienst einen Neustart übersteht:
 
 | Posten | Grösse |
 |---|---|
-| GTFS-ZIP | ~190 MB |
+| GTFS-ZIP (nur während des Downloads) | ~190 MB |
 | Rohdaten entpackt | ~2.9 GB |
 | SQLite-Datenbank | ~5.3 GB |
-| **Während eines Updates** | **~11 GB** |
+| **Dauerbedarf im Volume** | **~8.2 GB** |
+| **Spitze während eines Updates** | **~16 GB** |
 
-Der Spitzenwert entsteht durch den atomaren Wechsel: neuer und alter Stand liegen kurzzeitig nebeneinander. Bleibt weniger als ~6 GB frei, schlägt das Update fehl — der alte Stand läuft dann unverändert weiter.
+Der Spitzenwert entsteht durch den atomaren Wechsel: der neue Stand — Rohdaten **und** Datenbank — entsteht vollständig neben dem alten, bevor umgeschaltet wird. Rechne mit mindestens **9 GB freiem Platz** zusätzlich zum Dauerbedarf. Reicht er nicht, schlägt das Update fehl und der alte Stand läuft unverändert weiter.
 
 ---
 
@@ -110,7 +136,7 @@ Der Tunnel steht, das Backend nicht:
 
 ```bash
 docker compose ps                        # läuft gtfs? healthy?
-curl http://localhost:3010/health        # antwortet es lokal?
+curl http://localhost:3000/health        # Port aus HOST_PORT, Vorgabe 3000
 docker compose logs cloudflared --tail 20
 ```
 
@@ -144,7 +170,7 @@ Rename-Item "$env:LOCALAPPDATA\docker-secrets-engine" "docker-secrets-engine.bro
 
 ```bash
 docker compose exec gtfs node check-update.js --check
-curl -s http://localhost:3010/health | grep -o '"gtfs_filename":"[^"]*"'
+curl -s http://localhost:3000/health | grep -o '"gtfs_filename":"[^"]*"'
 ```
 
 ### Zu viele Fehlversuche (429)

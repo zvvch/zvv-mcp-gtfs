@@ -1,8 +1,28 @@
 # ZVV GTFS MCP Server
 
-Der gesamte Schweizer ÖV-Fahrplan als **MCP-Server** — abfragbar durch ChatGPT, Claude oder eigene Agents.
+Der gesamte Schweizer ÖV-Fahrplan als MCP-Server — abfragbar durch ChatGPT, Claude oder eigene Agents.
 
-Läuft als Docker-Container auf beliebiger Hardware, hält die Fahrplandaten selbstständig aktuell und stellt sie über zwei Endpunkte bereit: einen öffentlichen für Fahrplanabfragen und einen geschützten für freie SQL-Analysen.
+[![Tests](https://github.com/zvvch/zvv-mcp-gtfs/actions/workflows/ci.yml/badge.svg)](https://github.com/zvvch/zvv-mcp-gtfs/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/version-3.0.0-blue)](CHANGELOG.md)
+[![Lizenz](https://img.shields.io/badge/Lizenz-MIT-green)](LICENSE)
+[![Node](https://img.shields.io/badge/Node.js-%E2%89%A520-brightgreen)](package.json)
+[![MCP](https://img.shields.io/badge/MCP-Streamable%20HTTP-8A2BE2)](https://modelcontextprotocol.io)
+[![Doku](https://img.shields.io/badge/Doku-Architektur%20%C2%B7%20Betrieb-lightgrey)](docs/ARCHITECTURE.md)
+
+> [!NOTE]
+> Dieses Projekt stellt die offiziellen Schweizer Fahrplandaten über das Model Context Protocol bereit. Ein Sprachmodell kann damit Haltestellen suchen, Abfahrten abrufen und direkte Verbindungen finden — in natürlicher Sprache, ohne die Datenstruktur zu kennen. Der Server läuft als Docker-Container auf beliebiger Hardware, baut seine Datenbank beim ersten Start selbst auf und hält den Fahrplan danach selbstständig aktuell. Zwei Endpunkte trennen offene Fahrplanabfragen von administrativen SQL-Analysen.
+
+```mermaid
+flowchart LR
+    OTD["opentransportdata.swiss<br/>GTFS-Feed"] -->|täglich geprüft| DB[("SQLite<br/>41 Mio. Zeilen")]
+    DB --> PUB["POST /mcp<br/>7 Tools, anonym"]
+    DB --> ADM["POST /mcp-admin<br/>+ freies SQL, geschützt"]
+    DB --> UI["Weboberfläche<br/>GTFS Explorer"]
+    PUB --> CL["ChatGPT · Claude<br/>eigene Agents"]
+    ADM --> CL
+```
+
+*Abbildung: Der Feed wird lokal in SQLite überführt und über zwei getrennt abgesicherte MCP-Endpunkte bereitgestellt.*
 
 ```
 https://gtfs.zvv.dev/mcp          →  öffentlich, keine Anmeldung
@@ -21,9 +41,11 @@ https://gtfs.zvv.dev/mcp-admin    →  OAuth 2.1 oder Bearer-PIN
 - [MCP-Tools](#mcp-tools)
 - [Authentifizierung](#authentifizierung)
 - [HTTP-Endpunkte](#http-endpunkte)
+- [Weboberfläche](#weboberfläche)
 - [Konfiguration](#konfiguration)
 - [Fahrplan-Updates](#fahrplan-updates)
 - [Entwicklung](#entwicklung)
+- [Mitwirken und Support](#mitwirken-und-support)
 - [Weiterführend](#weiterführend)
 
 ---
@@ -36,10 +58,14 @@ Voraussetzung: Docker mit Compose-Plugin. Sonst nichts.
 git clone https://github.com/zvvch/zvv-mcp-gtfs.git
 cd zvv-mcp-gtfs
 cp .env.example .env
+docker volume create zvv-gtfs-data
 docker compose up -d
 ```
 
-Beim ersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2.9 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **10 bis 15 Minuten** und passiert genau einmal — danach liegen die Daten im Volume `zvv-gtfs-data` und überleben Updates und Neustarts.
+> [!IMPORTANT]
+> Die vierte Zeile ist Pflicht. `docker-compose.yml` deklariert `zvv-gtfs-data` bewusst als **externes** Volume, damit ein `docker compose down -v` die Datenbank nicht mitreisst. Externe Volumes legt Compose nicht selbst an — fehlt es, bricht der Start sofort ab mit `external volume "zvv-gtfs-data" not found`. Der Befehl ist wiederholbar: existiert das Volume schon, passiert nichts.
+
+Beim ersten Start baut der Container die Datenbank selbst auf: GTFS-ZIP laden, entpacken (~2.9 GB), rund 41 Mio. Zeilen nach SQLite importieren (~5.3 GB). Das dauert **10 bis 15 Minuten** und passiert genau einmal — danach liegen die Daten im Volume `zvv-gtfs-data` und überleben Updates und Neustarts. Rohdaten und Datenbank zusammen belegen rund **8.2 GB**.
 
 Fortschritt mitlesen:
 
@@ -109,7 +135,7 @@ curl -X POST https://gtfs.zvv.dev/mcp -H "Content-Type: application/json" -H "Ac
 
 ## MCP-Tools
 
-Alle Tools sind `readOnlyHint: true`, liefern `structuredContent` und haben ein `outputSchema`.
+Alle Tools sind `readOnlyHint: true`. Die sieben Fachabfragen liefern zusätzlich `structuredContent` und haben ein `outputSchema`. `query_gtfs` gibt sein Ergebnis nur als JSON-Text in `content` zurück — die Spaltenform einer freien Abfrage steht nicht im Voraus fest.
 
 ### `search_stops(query, limit?)`
 
@@ -225,19 +251,41 @@ Alle Anmeldewege laufen in denselben Zähler: **10 Fehlversuche je IP** sperren 
 
 ---
 
+## Weboberfläche
+
+Unter `/` liegt der **GTFS Explorer** — eine Oberfläche zum Erkunden der Daten ohne Sprachmodell. Sie ist nützlich, um Haltestellen-IDs nachzuschlagen oder eine SQL-Abfrage auszuprobieren, bevor du sie an `query_gtfs` gibst.
+
+| Reiter | Zweck |
+|---|---|
+| Haltestellen | Live-Suche beim Tippen, tolerant gegenüber Schreibweisen |
+| Linien | Linien nach Nummer und Verkehrsmittel filtern |
+| Abfahrten | Abfahrten ab einer Haltestelle zu Datum und Uhrzeit |
+| Fahrt-Details | Alle Halte einer Fahrt |
+| Unternehmen | Verkehrsunternehmen mit Anzahl Linien |
+| SQL | Freie Abfrage mit Beispielen zum Anpassen |
+| Status | Geladener Fahrplan und Tabellengrössen |
+| Dokumentation | Kurzreferenz im Browser |
+
+Die Oberfläche ist durch denselben PIN geschützt wie `/mcp-admin`. Nach der ersten Eingabe hält ein Sitzungscookie die Anmeldung dreissig Tage.
+
 ## Konfiguration
 
-Alles über `.env` (siehe `.env.example`):
+Im Docker-Betrieb wirken die folgenden Werte aus `.env`:
 
 | Variable | Vorgabe | Bedeutung |
 |---|---|---|
 | `MCP_AUTH_TOKEN` | — | PIN für `/mcp-admin`, Web-UI und OAuth. Leer = **kein Schutz**. |
-| `TUNNEL_ID` · `CF_CREDENTIALS_FILE` | — | Cloudflare Named Tunnel, siehe [OPERATIONS.md](docs/OPERATIONS.md#cloudflare-tunnel) |
 | `HOST_PORT` | `3000` | Host-Port, gebunden an `127.0.0.1` |
 | `GTFS_AUTO_UPDATE` | `true` | Fahrplan selbstständig aktuell halten |
 | `GTFS_UPDATE_INTERVAL_HOURS` | `24` | Abstand zwischen zwei Update-Prüfungen |
-| `PORT` | `3000` | Port im Container |
-| `GTFS_DB_PATH` | `zvv-data/gtfs.db` | Pfad zur SQLite-Datenbank |
+| `TUNNEL_ID` · `CF_CREDENTIALS_FILE` | — | Cloudflare Named Tunnel, siehe [OPERATIONS.md](docs/OPERATIONS.md#cloudflare-tunnel) |
+
+Zwei weitere Werte liest der Server, aber `docker-compose.yml` reicht sie **nicht** durch. Sie wirken nur beim Betrieb ohne Container:
+
+| Variable | Vorgabe | Bedeutung |
+|---|---|---|
+| `PORT` | `3000` | Port des Servers. Im Container über `HOST_PORT` steuern. |
+| `GTFS_DB_PATH` | `zvv-data/gtfs.db` | Pfad, aus dem der Server **liest**. Aufbau und Update schreiben unabhängig davon nach `zvv-data/gtfs.db`. |
 
 ---
 
@@ -248,7 +296,7 @@ opentransportdata.swiss veröffentlicht mehrmals im Jahr einen neuen Fahrplan. D
 Beim Start und danach täglich prüft er auf einen neueren Feed. Wenn ja, lädt und importiert er ihn **neben** dem laufenden Bestand und schwenkt erst um, wenn der neue Stand vollständig ist. Zwei Folgen, beide beabsichtigt:
 
 - **Ein fehlgeschlagenes Update kostet nichts.** Bricht der Download ab, bleibt der bisherige Fahrplan in Betrieb. Der Server beantwortet durchgehend Anfragen.
-- **Es braucht kurzzeitig doppelten Plattenplatz** (~11 GB statt ~5.5 GB).
+- **Es braucht kurzzeitig doppelten Plattenplatz.** Der Dauerbedarf liegt bei rund 8.2 GB (Rohdaten und Datenbank), während eines Updates bei rund 16 GB.
 
 Manuell auslösen:
 
@@ -285,6 +333,18 @@ zvv-mcp-gtfs/
 ```
 
 ---
+
+## Mitwirken und Support
+
+| Anliegen | Weg |
+|---|---|
+| Fehler melden | [Issue eröffnen](https://github.com/zvvch/zvv-mcp-gtfs/issues/new/choose) |
+| Funktion vorschlagen | [Issue eröffnen](https://github.com/zvvch/zvv-mcp-gtfs/issues/new/choose) |
+| Frage zur Nutzung | [Discussions](https://github.com/zvvch/zvv-mcp-gtfs/discussions) |
+| Sicherheitsproblem | vertraulich nach [SECURITY.md](SECURITY.md), **nicht** als Issue |
+| Änderung beitragen | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+Fragen zu den Fahrplandaten selbst — fehlende Linien, falsche Zeiten — gehören zu [opentransportdata.swiss](https://opentransportdata.swiss). Dieses Projekt stellt die Daten nur bereit und verändert sie nicht.
 
 ## Weiterführend
 

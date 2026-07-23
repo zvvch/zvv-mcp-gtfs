@@ -48,7 +48,7 @@ Wer die alte Nummer verwendet, bekam anfangs **stillschweigend null Abfahrten** 
 
 Die Umrechnung: `85` entfernen, führende Nullen entfernen, `ch:1:sloid:` davorsetzen. Bestätigt an Zürich HB, Stadelhofen, Basel SBB, Bern, Luzern, Lausanne und St. Gallen — 7 von 7.
 
-> **Sackgasse, die dokumentiert bleiben soll:** Ein erster Versuch stützte sich auf die Spalte `original_stop_id`, weil sie bei einer *ausländischen* Haltestelle die alte Nummer trug. Falsch: für die rund 96'000 Schweizer Stops dupliziert sie nur die SLOID. Der Fix war wirkungslos und fiel erst beim Test gegen die fertige Datenbank auf. Die Spalte hilft weiterhin bei den knapp 5'000 ausländischen Haltestellen, die nie eine SLOID hatten.
+> **Sackgasse, die dokumentiert bleiben soll:** Ein erster Versuch stützte sich auf die Spalte `original_stop_id`, weil sie bei einer *ausländischen* Haltestelle die alte Nummer trug. Falsch: für die 98'244 Schweizer Stops dupliziert sie nur die SLOID. Der Fix war wirkungslos und fiel erst beim Test gegen die fertige Datenbank auf. Die Spalte hilft weiterhin bei den 5'304 ausländischen Haltestellen, die nie eine SLOID hatten.
 
 Wichtiger als die Umrechnung ist die zweite Lehre: **eine unbekannte ID muss als Fehler gemeldet werden, nicht als leeres Ergebnis.** Genau dieses stille Nichts hatte den Fehler wochenlang verdeckt.
 
@@ -100,7 +100,7 @@ Drei Dinge, die ein Sprachmodell sonst scheitern lassen:
 | `zuerich` | deutsche Umschreibung | Rückfall `ue→u`, **nur bei null Treffern** |
 | `zurich bellevue` | offiziell `Zürich, Bellevue` | wortweise Suche statt durchgehendem Substring |
 
-Der Rückfall greift bewusst erst bei null Treffern — sonst würde `Neuenburg` zu `Nunburg` verstümmelt und fände nichts mehr.
+Der Rückfall greift bewusst erst bei null Treffern — sonst würde `Neuenburg` zu `Neunburg` verstümmelt und fände nichts mehr.
 
 Die Sortierung vergleicht **ohne Satzzeichen**, damit die Tramhaltestelle `Zürich, Bellevue` vor der Schiffstation `Zürich Bellevue (See)` liegt. Das muss **nach** dem SQL-`LIMIT` geschehen — mit `LIMIT 1` kam sonst die falsche durch.
 
@@ -114,7 +114,7 @@ Die Sortierung vergleicht **ohne Satzzeichen**, damit die Tramhaltestelle `Züri
 |---|---|---|
 | Self-Join über `stop_times` | **20 s** | 28 Mio. Zeilen mit sich selbst verbunden |
 | Zweistufig, Ziel per `stop_id IN (…)` | **19 s** | SQLite wählt den Stop-Index und scannt Millionen Zeilen |
-| Zweistufig, Filter in JS | **0.9–3.2 s** | Stufe 2 filtert nur nach `trip_id` → Trip-Index |
+| Zweistufig, Filter in JS | **0.2–1.8 s** | Stufe 2 filtert nur nach `trip_id` → Trip-Index |
 
 Der entscheidende Punkt ist die dritte Zeile: Stufe 2 filtert **ausschliesslich nach `trip_id`**, damit der Abfrageplaner sicher den Trip-Index nimmt. Die Zielhalte werden anschliessend in JavaScript gefiltert. Ein zusätzliches `stop_id IN (…)` in der SQL kippt den Plan und kostet Faktor 20.
 
@@ -209,12 +209,17 @@ Gemessen gegen den Produktivbestand (41 Mio. Zeilen):
 
 | Vorgang | Laufzeit |
 |---|---|
-| `search_stops` | 0.1–0.2 s |
-| `get_stop_departures` | 1.0–1.8 s |
-| `get_connections`, innerstädtisch | 0.9 s |
-| `get_connections`, Fernverkehr | 3.2 s |
+| `get_dataset_info` | 5–10 ms |
+| `search_stops` | 40–90 ms |
+| `get_connections`, innerstädtisch | 0.2 s |
+| `get_connections`, Fernverkehr | 1.4–1.8 s |
+| `get_stop_departures`, grosser Knoten | 2.7–2.8 s |
 | Live-Suche der Web-UI (`/api/suggest`) | 34 ms + ~50 ms Netz |
 | `/health` | gecacht, O(1) |
+
+Gemessen über `POST /mcp` gegen den Produktivbestand, je drei warme Läufe.
+
+**`get_stop_departures` ist der langsamste Aufruf.** Ein Knoten wie Zürich HB hat fast vierzig Haltekanten, und die Abfrage läuft zweimal — einmal für den heutigen Betriebstag, einmal für den vorherigen wegen der Nachtkurse. Der Aufwand steckt in der Gültigkeitsprüfung über `calendar_dates`, eine Tabelle mit rund zehn Millionen Zeilen. Für kleinere Haltestellen liegt der Wert deutlich darunter.
 
 Zwei Optimierungen tragen den grössten Teil:
 

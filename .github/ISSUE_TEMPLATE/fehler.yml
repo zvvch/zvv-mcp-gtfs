@@ -1,0 +1,58 @@
+name: Fehler melden
+description: Etwas verhält sich anders als dokumentiert
+labels: ["fehler"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Danke für die Meldung. Sicherheitsprobleme bitte **nicht** hier melden,
+        sondern nach [SECURITY.md](../blob/main/SECURITY.md) verfahren.
+
+  - type: textarea
+    id: erwartet
+    attributes:
+      label: Erwartetes Verhalten
+      description: Was sollte passieren, und woher stammt diese Erwartung?
+      placeholder: Laut README liefert get_stop_departures ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: tatsaechlich
+    attributes:
+      label: Tatsächliches Verhalten
+      description: Was passiert stattdessen? Vollständige Fehlermeldung einfügen, falls vorhanden.
+    validations:
+      required: true
+
+  - type: textarea
+    id: schritte
+    attributes:
+      label: Schritte zum Nachvollziehen
+      description: Am hilfreichsten ist ein Befehl, der das Problem auslöst.
+      render: bash
+      placeholder: |
+        curl -X POST https://gtfs.zvv.dev/mcp \
+          -H "Content-Type: application/json" \
+          -H "Accept: application/json, text/event-stream" \
+          -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+    validations:
+      required: true
+
+  - type: input
+    id: fahrplan
+    attributes:
+      label: Geladener Fahrplan
+      description: Ausgabe von `get_dataset_info` oder das Feld `gtfs_filename` aus `GET /health`.
+      placeholder: gtfs_fp2026_20260722.zip
+
+  - type: dropdown
+    id: umgebung
+    attributes:
+      label: Umgebung
+      options:
+        - Öffentlicher Dienst gtfs.zvv.dev
+        - Eigener Betrieb mit Docker
+        - Lokale Entwicklung mit npm
+    validations:
+      required: true

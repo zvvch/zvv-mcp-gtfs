@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Sicherheitsproblem melden
+    url: https://github.com/zvvch/zvv-mcp-gtfs/security/advisories/new
+    about: Schwachstellen bitte vertraulich melden, nicht als öffentliches Issue.
+  - name: Frage zur Nutzung
+    url: https://github.com/zvvch/zvv-mcp-gtfs/discussions
+    about: Fragen zur Einbindung oder zu den Fahrplandaten.
