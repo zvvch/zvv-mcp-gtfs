@@ -494,6 +494,29 @@ describe('Auth-Middleware', () => {
     const res = await get('/health');
     assert.equal(res.status, 200);
   });
+
+  it('sperrt eine IP nach zu vielen Fehlversuchen (Brute-Force-Schutz)', async () => {
+    // Eigene IP verwenden, damit die anderen Tests nicht betroffen sind.
+    const ip = '203.0.113.77';
+    let sawLock = false;
+    for (let i = 0; i < 12; i++) {
+      const res = await post('/api/query', { sql: 'SELECT 1' },
+        { Authorization: 'Bearer falsch', 'CF-Connecting-IP': ip });
+      if (res.status === 429) { sawLock = true; break; }
+      assert.equal(res.status, 401);
+    }
+    assert.ok(sawLock, 'nach 10 Fehlversuchen haette 429 kommen muessen');
+
+    // Auch ein KORREKTER Token bleibt waehrend der Sperre abgewiesen.
+    const locked = await post('/api/query', { sql: 'SELECT 1' },
+      { Authorization: `Bearer ${TOKEN}`, 'CF-Connecting-IP': ip });
+    assert.equal(locked.status, 429);
+
+    // Eine andere IP ist davon unberuehrt.
+    const other = await post('/api/query', { sql: 'SELECT 1 AS n' },
+      { Authorization: `Bearer ${TOKEN}`, 'CF-Connecting-IP': '203.0.113.78' });
+    assert.equal(other.status, 200);
+  });
 });
 
 // ============================================================

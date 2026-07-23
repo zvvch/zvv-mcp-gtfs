@@ -849,9 +849,47 @@
       .form-row { flex-direction: column; }
       input, select, button.btn { width: 100%; }
     }
+    /* --- PIN-Dialog --- */
+    #token-overlay {
+      display: none; position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,.72); backdrop-filter: blur(4px);
+      align-items: center; justify-content: center;
+    }
+    #token-box {
+      background: var(--card, #14161c); border: 1px solid var(--border, #2a2f3a);
+      border-radius: 12px; padding: 28px 30px; width: min(420px, 92vw);
+      box-shadow: 0 18px 50px rgba(0,0,0,.55);
+    }
+    #token-box h3 { margin: 0 0 6px; font-size: 17px; }
+    #token-msg { margin: 0 0 18px; font-size: 13px; color: var(--muted, #8b93a5); line-height: 1.5; }
+    #token-input {
+      width: 100%; box-sizing: border-box; padding: 12px 14px; font-size: 20px;
+      letter-spacing: .22em; text-align: center; border-radius: 8px;
+      border: 1px solid var(--border, #2a2f3a); background: var(--bg, #0d0f14);
+      color: var(--fg, #e7eaf0); outline: none;
+    }
+    #token-input:focus { border-color: var(--accent, #6ea8fe); }
+    .token-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+    .token-actions button {
+      padding: 9px 18px; border-radius: 8px; font-size: 14px; cursor: pointer;
+      border: 1px solid var(--border, #2a2f3a); background: transparent; color: var(--fg, #e7eaf0);
+    }
+    .token-actions button.primary { background: var(--accent, #6ea8fe); border-color: var(--accent, #6ea8fe); color: #0b0d12; font-weight: 600; }
   </style>
 </head>
 <body>
+  <div id="token-overlay" role="dialog" aria-modal="true" aria-labelledby="token-title">
+    <div id="token-box">
+      <h3 id="token-title">Zugang</h3>
+      <p id="token-msg"></p>
+      <input id="token-input" type="password" inputmode="numeric" autocomplete="current-password"
+             placeholder="PIN" aria-label="PIN" />
+      <div class="token-actions">
+        <button id="token-cancel" type="button">Abbrechen</button>
+        <button id="token-save" type="button" class="primary">Entsperren</button>
+      </div>
+    </div>
+  </div>
   <div class="app">
     <header>
       <div class="header-icon">
@@ -1362,17 +1400,59 @@ fetch('/api/query', {
       return apiToken ? { ...base, 'Authorization': `Bearer ${apiToken}` } : base;
     }
 
-    // Bei 401 einmalig nach dem Token fragen und die Anfrage wiederholen.
+    // Token-Dialog: eine eigene Overlay-Maske statt des rohen prompt().
+    // Aufloesung erfolgt, sobald der Nutzer speichert oder abbricht.
+    function askForToken(hint) {
+      return new Promise(resolve => {
+        const ov = document.getElementById('token-overlay');
+        const inp = document.getElementById('token-input');
+        const msg = document.getElementById('token-msg');
+        msg.textContent = hint || 'Dieser Server ist token-geschützt.';
+        inp.value = '';
+        ov.style.display = 'flex';
+        setTimeout(() => inp.focus(), 50);
+
+        const done = (value) => {
+          ov.style.display = 'none';
+          document.getElementById('token-save').onclick = null;
+          document.getElementById('token-cancel').onclick = null;
+          inp.onkeydown = null;
+          resolve(value);
+        };
+        document.getElementById('token-save').onclick = () => done(inp.value.trim());
+        document.getElementById('token-cancel').onclick = () => done('');
+        inp.onkeydown = (e) => {
+          if (e.key === 'Enter') done(inp.value.trim());
+          if (e.key === 'Escape') done('');
+        };
+      });
+    }
+
+    // Verhindert, dass mehrere parallele 401er mehrere Dialoge oeffnen.
+    let tokenPending = null;
+
+    // Bei 401 nach dem Token fragen und die Anfrage wiederholen.
     async function withAuthRetry(doFetch) {
       const res = await doFetch();
       if (res.status !== 401) return res;
 
-      const entered = prompt('Dieser Server ist token-geschützt.\nMCP_AUTH_TOKEN eingeben:', '');
+      if (!tokenPending) {
+        tokenPending = askForToken('Dieser Server ist geschützt. Bitte den PIN eingeben — er wird lokal im Browser gespeichert.')
+          .finally(() => { setTimeout(() => { tokenPending = null; }, 0); });
+      }
+      const entered = await tokenPending;
       if (!entered) return res;
 
-      apiToken = entered.trim();
+      apiToken = entered;
       localStorage.setItem('gtfs_token', apiToken);
       return doFetch();
+    }
+
+    /** Token vergessen -- für den Fall, dass ein falscher gespeichert wurde. */
+    function clearToken() {
+      apiToken = '';
+      localStorage.removeItem('gtfs_token');
+      location.reload();
     }
 
     async function apiCall(endpoint) {

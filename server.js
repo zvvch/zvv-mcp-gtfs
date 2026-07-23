@@ -643,14 +643,67 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+// --- Brute-Force-Schutz ---
+// Ein kurzer PIN ist bequem, aber durchprobierbar. Nach MAX_FAILS
+// Fehlversuchen wird die Quell-IP fuer LOCK_MS gesperrt. Damit sind auch
+// achtstellige PINs praktisch nicht mehr zu erraten: 10 Versuche pro
+// 15 Minuten bedeuten fuer 10^8 Moeglichkeiten Jahrtausende.
+const MAX_FAILS = 10;
+const LOCK_MS = 15 * 60 * 1000;
+const MAX_TRACKED_IPS = 10000;
+const authFailures = new Map();
+
+/** Echte Client-IP -- hinter dem Cloudflare-Tunnel steht sie im Header */
+function clientIp(req) {
+  return req.get('cf-connecting-ip') || req.ip || 'unknown';
+}
+
+/** Haelt die Map klein, falls sie durch verteilte Versuche volllaeuft */
+function pruneAuthFailures(now) {
+  if (authFailures.size < MAX_TRACKED_IPS) return;
+  for (const [ip, rec] of authFailures) {
+    if (rec.until <= now) authFailures.delete(ip);
+  }
+}
+
 /** Verlangt "Authorization: Bearer <MCP_AUTH_TOKEN>", sofern ein Token konfiguriert ist */
 function requireAuth(req, res, next) {
   if (!AUTH_TOKEN) return next();
 
+  const ip = clientIp(req);
+  const now = Date.now();
+  const rec = authFailures.get(ip);
+
+  if (rec && rec.until > now) {
+    const wait = Math.ceil((rec.until - now) / 1000);
+    res.set('Retry-After', String(wait));
+    return res.status(429).json({
+      error: 'Zu viele Fehlversuche. Bitte spaeter erneut versuchen.',
+      retry_after_seconds: wait
+    });
+  }
+
   const header = req.get('authorization') || '';
   const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
 
-  if (provided && safeEqual(provided, AUTH_TOKEN)) return next();
+  if (provided && safeEqual(provided, AUTH_TOKEN)) {
+    authFailures.delete(ip); // sauberer Zugriff setzt den Zaehler zurueck
+    return next();
+  }
+
+  // Fehlversuch buchen. Nur nach einer ABGELAUFENEN Sperre (until > 0) faengt
+  // der Zaehler neu an -- until === 0 heisst "noch nie gesperrt" und darf den
+  // laufenden Zaehler nicht zuruecksetzen.
+  const expired = rec && rec.until > 0 && rec.until <= now;
+  const cur = (!rec || expired) ? { count: 0, until: 0 } : rec;
+  cur.count += 1;
+  if (cur.count >= MAX_FAILS) {
+    cur.until = now + LOCK_MS;
+    cur.count = 0;
+    console.warn(`[Auth] IP ${ip} nach ${MAX_FAILS} Fehlversuchen fuer ${LOCK_MS / 60000} min gesperrt.`);
+  }
+  authFailures.set(ip, cur);
+  pruneAuthFailures(now);
 
   res.set('WWW-Authenticate', 'Bearer');
   res.status(401).json({
