@@ -68,6 +68,14 @@ function registerTools(server, d, opts = {}) {
   // Alle lesenden Tools teilen dieselben Hinweise.
   const READ = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 
+  // securitySchemes ist im SDK 1.29 nicht vorgesehen -- registerTool
+  // destrukturiert nur sechs Schluessel und verwirft alles andere still.
+  // _meta ist der offizielle Erweiterungskanal und wird unveraendert
+  // ausgeliefert, deshalb steht die Angabe dort. Ob ein Client sie liest,
+  // ist offen; auf dem oeffentlichen Endpunkt ist sie ohnehin nur eine
+  // Bestaetigung des Offensichtlichen: hier wird nichts verlangt.
+  const NOAUTH_META = admin ? undefined : { securitySchemes: [{ type: 'noauth' }] };
+
   /** Aktuelle Schweizer Uhrzeit als HH:MM:SS */
   const nowSwissTime = () => new Date().toLocaleTimeString('de-CH', {
     timeZone: 'Europe/Zurich', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
@@ -206,6 +214,7 @@ function registerTools(server, d, opts = {}) {
     },
     outputSchema: { count: z.number(), stops: z.array(z.object(StopShape)) },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ query, limit }) => {
     const db = getDb();
     const rows = searchStopsByName(db, query, limit);
@@ -229,6 +238,7 @@ function registerTools(server, d, opts = {}) {
       count: z.number(), departures: z.array(z.object(DepartureShape)),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ stop, date, time_from, limit }) => {
     const db = getDb();
     const place = resolvePlace(db, stop);
@@ -280,6 +290,7 @@ function registerTools(server, d, opts = {}) {
       })),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ from, to, date, time_from, limit }) => {
     const db = getDb();
     const A = resolvePlace(db, from);
@@ -397,6 +408,7 @@ function registerTools(server, d, opts = {}) {
       })),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ trip_id }) => {
     const db = getDb();
     const trip = db.prepare(`
@@ -437,6 +449,7 @@ function registerTools(server, d, opts = {}) {
       })),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ name, agency_id, route_type, limit }) => {
     const db = getDb();
     let sql = `SELECT r.route_id, r.route_short_name, r.route_long_name, r.route_type,
@@ -470,6 +483,7 @@ function registerTools(server, d, opts = {}) {
       })),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async ({ limit }) => {
     const db = getDb();
     const agencies = db.prepare(`
@@ -493,6 +507,7 @@ function registerTools(server, d, opts = {}) {
       tables: z.record(z.string(), z.number()),
     },
     annotations: READ,
+    _meta: NOAUTH_META,
   }, async () => {
     const meta = getMeta();
     return ok({
