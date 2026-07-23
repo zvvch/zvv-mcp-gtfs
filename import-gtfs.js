@@ -6,6 +6,15 @@ const Database = require('better-sqlite3');
 const GTFS_DIR = path.join(__dirname, 'zvv-data', 'gtfs');
 const DB_PATH = path.join(__dirname, 'zvv-data', 'gtfs.db');
 
+/**
+ * SQL-Ausdruck, der einen Namen fuer die Suche normalisiert:
+ * kleingeschrieben und ohne die im Schweizer Feed vorkommenden Diakritika.
+ * Wird beim Import in stop_name_norm materialisiert und im Server fuer die
+ * Suchanfrage verwendet -- beide Seiten muessen identisch normalisieren.
+ */
+const NORMALIZE_SQL = (col) =>
+  `lower(replace(replace(replace(replace(replace(replace(replace(${col},'ü','u'),'ö','o'),'ä','a'),'é','e'),'è','e'),'à','a'),'ç','c'))`;
+
 // GTFS-Tabellen-Definitionen: Name -> { file, columns, indexes }
 const GTFS_TABLES = {
   agency: {
@@ -306,6 +315,21 @@ async function importTable(db, tableName, tableDef, gtfsDir) {
     }
   }
 
+  // Suchspalte fuer die Haltestellensuche: kleingeschrieben und ohne
+  // Diakritika. So findet "zurich" auch "Zürich", ohne dass bei jeder
+  // Abfrage ein REPLACE-Stapel ueber 103'000 Zeilen laufen muss.
+  if (tableName === 'stops') {
+    try {
+      db.exec(`
+        ALTER TABLE stops ADD COLUMN stop_name_norm TEXT;
+        UPDATE stops SET stop_name_norm = ${NORMALIZE_SQL('stop_name')};
+        CREATE INDEX IF NOT EXISTS idx_stops_name_norm ON stops(stop_name_norm);
+      `);
+    } catch (err) {
+      console.log(`  Suchspalte uebersprungen (${err.message})`);
+    }
+  }
+
   process.stdout.write(`\r  ${tableName}: ${rowCount.toLocaleString()} Zeilen importiert\n`);
   return rowCount;
 }
@@ -382,7 +406,7 @@ async function importGTFS(dbPath = DB_PATH, gtfsDir = GTFS_DIR) {
 }
 
 // Exportieren für Tests und andere Module
-module.exports = { importGTFS, GTFS_TABLES, DB_PATH, GTFS_DIR, parseCSVLine };
+module.exports = { importGTFS, GTFS_TABLES, DB_PATH, GTFS_DIR, parseCSVLine, NORMALIZE_SQL };
 
 // Hauptablauf (nur wenn direkt ausgeführt)
 if (require.main === module) {

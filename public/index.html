@@ -849,6 +849,15 @@
       .form-row { flex-direction: column; }
       input, select, button.btn { width: 100%; }
     }
+    /* --- Live-Suche --- */
+    .ac-wrap { position: relative; flex: 1; min-width: 0; }
+    .ac-wrap input { width: 100%; box-sizing: border-box; }
+    /* Treffer im Namen hervorheben */
+    #stops-result mark { background: transparent; color: var(--accent, #6ea8fe); font-weight: 700; }
+    /* Mit den Pfeiltasten markierte Zeile */
+    #stops-result tbody tr:hover { background: rgba(110,168,254,.10); }
+    #stops-result tbody tr.active { background: rgba(110,168,254,.18); outline: 1px solid var(--accent, #6ea8fe); }
+
     /* --- PIN-Dialog --- */
     #token-overlay {
       display: none; position: fixed; inset: 0; z-index: 9999;
@@ -919,7 +928,10 @@
       <div class="card">
         <h3>Haltestellen suchen</h3>
         <div class="form-row">
-          <input type="text" id="stop-query" placeholder="z.B. Zürich HB, Paradeplatz, Bern..." autofocus>
+          <div class="ac-wrap">
+            <input type="text" id="stop-query" placeholder="Tippen genügt — z.B. zurich hb, paradeplatz, bern"
+                   autocomplete="off" autofocus>
+          </div>
           <input type="number" id="stop-limit" value="20" min="1" max="100" style="max-width:90px" title="Limit">
           <button class="btn" onclick="searchStops()">Suchen</button>
           <button class="btn-random" onclick="randomStops()" title="Zufällige Haltestelle"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM7.5 18c-.83 0-1.5-.67-1.5-1.5S6.67 15 7.5 15s1.5.67 1.5 1.5S8.33 18 7.5 18zm0-9C6.67 9 6 8.33 6 7.5S6.67 6 7.5 6 9 6.67 9 7.5 8.33 9 7.5 9zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4.5 4.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm0-9c-.83 0-1.5-.67-1.5-1.5S15.67 6 16.5 6s1.5.67 1.5 1.5S17.33 9 16.5 9z"/></svg>Zufall</button>
@@ -1803,49 +1815,123 @@ fetch('/api/query', {
       }
     }
 
-    // --- Enter Key ---
-    document.getElementById('stop-query').addEventListener('keydown', e => { if (e.key === 'Enter') searchStops(); });
+    // --- Live-Suche fuer Haltestellen ---
+    // Die Trefferliste aktualisiert sich beim Tippen. Zwei Dinge sind dabei
+    // wichtig: kurz entprellen (sonst eine Anfrage pro Anschlag) und veraltete
+    // Anfragen abbrechen -- sonst ueberholt eine aeltere Antwort die neuere
+    // und die Liste zeigt Treffer zu einer laengst korrigierten Eingabe.
+    const acInput = document.getElementById('stop-query');
+    let acTimer = null, acAbort = null, acRows = [], acIndex = -1, acLastQ = '';
+
+    function escHtml(s) {
+      return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    // Diakritika-tolerant hervorheben: die Eingabe "zurich" soll die Stelle
+    // in "Zürich" markieren, obwohl sich die Zeichen unterscheiden.
+    function normLoose(s) {
+      return String(s).toLowerCase()
+        .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ä/g, 'a')
+        .replace(/é/g, 'e').replace(/è/g, 'e').replace(/à/g, 'a').replace(/ç/g, 'c');
+    }
+    function acHighlight(name, q) {
+      const i = normLoose(name).indexOf(normLoose(q));
+      if (i < 0 || !q) return escHtml(name);
+      return escHtml(name.slice(0, i)) + '<mark>' + escHtml(name.slice(i, i + q.length)) + '</mark>' + escHtml(name.slice(i + q.length));
+    }
+
+    function acMove(delta) {
+      if (!acRows.length) return;
+      acIndex = Math.max(0, Math.min(acRows.length - 1, acIndex + delta));
+      const el = document.getElementById('stops-result');
+      el.querySelectorAll('tbody tr').forEach((tr, i) => tr.classList.toggle('active', i === acIndex));
+      const active = el.querySelector('tbody tr.active');
+      if (active) active.scrollIntoView({ block: 'nearest' });
+    }
+
+    function acRender(rows, q) {
+      const el = document.getElementById('stops-result');
+      acRows = rows; acIndex = -1;
+
+      if (!rows.length) {
+        el.innerHTML = `<div class="empty">Keine Haltestelle gefunden für „${escHtml(q)}“</div>`;
+        return;
+      }
+      el.innerHTML = `
+        <div class="count">${rows.length} Haltestelle${rows.length !== 1 ? 'n' : ''}${rows.length >= 20 ? '+' : ''} · Enter oder Klick zeigt die Abfahrten</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Haltestelle</th><th>Stop-ID</th><th>Kanten</th><th>Position</th></tr></thead>
+          <tbody>${rows.map((s, i) => `
+            <tr data-i="${i}" style="cursor:pointer" onclick="showDepartures('${s.stop_id}')">
+              <td><strong>${acHighlight(s.stop_name, q)}</strong></td>
+              <td><code style="color:var(--accent)">${escHtml(s.stop_id)}</code></td>
+              <td>${s.variants > 1 ? s.variants : '—'}</td>
+              <td>${s.stop_lat ? Number(s.stop_lat).toFixed(4) + ', ' + Number(s.stop_lon).toFixed(4) : ''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>`;
+    }
+
+    async function acFetch(q) {
+      if (acAbort) acAbort.abort();
+      acAbort = new AbortController();
+      const limit = parseInt(document.getElementById('stop-limit').value) || 20;
+      try {
+        const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}&limit=${limit}`, {
+          credentials: 'same-origin', signal: acAbort.signal
+        });
+        if (res.status === 401) {
+          // Anmeldung nachholen und danach erneut suchen.
+          const ok = await withAuthRetry(() => fetch(`/api/suggest?q=${encodeURIComponent(q)}&limit=${limit}`, { credentials: 'same-origin' }));
+          if (ok.status !== 200) return;
+          const d2 = await ok.json();
+          if (acInput.value.trim() === q) acRender(d2.suggestions || [], q);
+          return;
+        }
+        if (!res.ok) return;
+        const data = await res.json();
+        // Nur uebernehmen, wenn die Eingabe noch zur Antwort passt.
+        if (acInput.value.trim() === q) acRender(data.suggestions || [], q);
+      } catch (e) {
+        if (e.name !== 'AbortError') {
+          document.getElementById('stops-result').innerHTML = `<div class="error">${escHtml(e.message)}</div>`;
+        }
+      }
+    }
+
+    function searchStops() {
+      const q = acInput.value.trim();
+      clearTimeout(acTimer);
+      if (!q) { document.getElementById('stops-result').innerHTML = ''; acRows = []; return; }
+      acFetch(q);
+    }
+
+    acInput.addEventListener('input', () => {
+      const q = acInput.value.trim();
+      clearTimeout(acTimer);
+      if (!q) { document.getElementById('stops-result').innerHTML = ''; acRows = []; acLastQ = ''; return; }
+      if (q === acLastQ) return;
+      acLastQ = q;
+      acTimer = setTimeout(() => acFetch(q), 120);
+    });
+
+    document.getElementById('stop-limit').addEventListener('change', searchStops);
+
+    acInput.addEventListener('keydown', e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); return acMove(acIndex < 0 ? 0 : 1); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); return acMove(-1); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        clearTimeout(acTimer);
+        // Markierte Zeile oder, wenn keine markiert ist, den besten Treffer.
+        const pick = acRows[acIndex >= 0 ? acIndex : 0];
+        if (pick) showDepartures(pick.stop_id);
+      }
+    });
     document.getElementById('dep-stop-id').addEventListener('keydown', e => { if (e.key === 'Enter') getDepartures(); });
     document.getElementById('trip-id').addEventListener('keydown', e => { if (e.key === 'Enter') getTripDetails(); });
 
-    // --- Haltestellen ---
-    async function searchStops() {
-      const query = document.getElementById('stop-query').value.trim();
-      if (!query) return;
-      const limit = parseInt(document.getElementById('stop-limit').value) || 20;
-      const el = document.getElementById('stops-result');
-      el.innerHTML = '<div class="loading">Suche</div>';
-
-      try {
-        const data = await apiPost('/api/query', {
-          sql: `SELECT stop_id, stop_name, stop_lat, stop_lon, location_type, parent_station
-                FROM stops WHERE stop_name LIKE '%${query.replace(/'/g, "''")}%'
-                ORDER BY CASE WHEN stop_name LIKE '${query.replace(/'/g, "''")}%' THEN 0 ELSE 1 END, stop_name
-                LIMIT ${limit}`
-        });
-
-        if (data.error) { el.innerHTML = `<div class="error">${data.error}</div>`; return; }
-        if (!data.results || data.results.length === 0) { el.innerHTML = '<div class="empty">Keine Ergebnisse</div>'; return; }
-
-        el.innerHTML = `
-          <div class="count">${data.count} Ergebnis${data.count !== 1 ? 'se' : ''}</div>
-          <div class="table-wrap"><table>
-            <thead><tr><th>Stop ID</th><th>Name</th><th>Lat</th><th>Lon</th><th>Typ</th></tr></thead>
-            <tbody>${data.results.map(s => `
-              <tr>
-                <td><a href="#" onclick="showDepartures('${s.stop_id}'); return false" style="color:var(--accent); text-decoration:none">${s.stop_id}</a></td>
-                <td>${s.stop_name || ''}</td>
-                <td>${s.stop_lat ? Number(s.stop_lat).toFixed(5) : ''}</td>
-                <td>${s.stop_lon ? Number(s.stop_lon).toFixed(5) : ''}</td>
-                <td>${s.location_type === 1 ? 'Station' : s.location_type === 0 ? 'Gleis/Kante' : s.location_type ?? ''}</td>
-              </tr>`).join('')}
-            </tbody>
-          </table></div>`;
-        makeSortable(el.querySelector('.table-wrap'));
-      } catch (err) {
-        el.innerHTML = `<div class="error">${err.message}</div>`;
-      }
-    }
+    // (searchStops lebt jetzt oben bei der Live-Suche.)
 
     function showDepartures(stopId) {
       document.getElementById('dep-stop-id').value = stopId;

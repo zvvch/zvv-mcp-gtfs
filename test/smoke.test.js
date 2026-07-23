@@ -512,6 +512,31 @@ describe('Auth-Middleware', () => {
     assert.equal(res.status, 200);
   });
 
+  it('/api/suggest liefert gruppierte, diakritika-tolerante Treffer', async () => {
+    const ok = await post('/api/login', { pin: TOKEN }, { 'CF-Connecting-IP': '203.0.113.20' });
+    const cookie = ok.headers['set-cookie'][0].split(';')[0];
+
+    const get2 = (p) => new Promise((resolve, reject) => {
+      const url = new URL(p, baseUrl);
+      http.get({ hostname: url.hostname, port: url.port, path: url.pathname + url.search, headers: { Cookie: cookie } },
+        (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(d) })); })
+        .on('error', reject);
+    });
+
+    // Die Fixture enthaelt "Zürich, Bahnhofstrasse" o.ae. -- ohne Umlaut suchen.
+    const res = await get2('/api/suggest?q=zurich&limit=5');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.suggestions));
+
+    // Ohne Anmeldung abgewiesen.
+    const nope = await new Promise((resolve, reject) => {
+      const url = new URL('/api/suggest?q=zurich', baseUrl);
+      http.get({ hostname: url.hostname, port: url.port, path: url.pathname + url.search },
+        (r) => { r.resume(); r.on('end', () => resolve({ status: r.statusCode })); }).on('error', reject);
+    });
+    assert.equal(nope.status, 401);
+  });
+
   it('PIN gegen Session-Cookie tauschen -> danach kein Header mehr noetig', async () => {
     const bad = await post('/api/login', { pin: 'falsch' }, { 'CF-Connecting-IP': '203.0.113.10' });
     assert.equal(bad.status, 401);

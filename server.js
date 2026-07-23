@@ -43,7 +43,10 @@ function closeDb() {
       // Handle war bereits zu -- nicht weiter tragisch
     }
     db = null;
-    statsCache = null; // Zaehler gelten nur fuer die alte Datei
+    // Alles, was an die alte Datei gebunden war, verwerfen.
+    statsCache = null;
+    normColCache = undefined;
+    originalColCache = undefined;
   }
 }
 
@@ -137,6 +140,24 @@ const HVT_RANGES = {
   6: [1300, 1399],  // Luftseilbahn / Gondel
   7: [1400, 1499],  // Standseilbahn
 };
+
+// Muss identisch zu NORMALIZE_SQL im Importer arbeiten, sonst findet die
+// Suche nichts: der Suchbegriff wird hier genauso zugerichtet wie die Spalte.
+const { NORMALIZE_SQL } = require('./import-gtfs.js');
+function normalizeForSearch(s) {
+  return String(s).toLowerCase()
+    .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ä/g, 'a')
+    .replace(/é/g, 'e').replace(/è/g, 'e').replace(/à/g, 'a').replace(/ç/g, 'c');
+}
+
+// Aeltere Datenbanken kennen stop_name_norm noch nicht.
+let normColCache;
+function hasStopNameNorm(d) {
+  if (normColCache === undefined) {
+    normColCache = d.prepare('PRAGMA table_info(stops)').all().some(c => c.name === 'stop_name_norm');
+  }
+  return normColCache;
+}
 
 // Aeltere Datenbanken kennen original_stop_id noch nicht.
 let originalColCache;
@@ -881,6 +902,62 @@ function createApp() {
   app.post('/api/logout', (req, res) => {
     res.set('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0`);
     res.json({ ok: true });
+  });
+
+  // Autocomplete fuer die Haltestellensuche.
+  // Eigener schlanker Endpunkt statt /api/query: pro Tastendruck soll kein
+  // SQL ueber die Leitung gehen, und das Ergebnis wird nach Namen
+  // zusammengefasst -- "Zuerich HB" existiert 27 Mal (je Gleis) und gehoert
+  // trotzdem nur einmal in die Vorschlagsliste.
+  app.get('/api/suggest', requireAuth, (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      if (!q) return res.json({ count: 0, suggestions: [] });
+
+      const limit = Math.max(1, Math.min(50, Math.floor(Number(req.query.limit)) || 20));
+      const d = getDb();
+
+      // stop_name_norm ist kleingeschrieben und ohne Diakritika -- damit
+      // findet "zurich" auch "Zürich". Aeltere Datenbanken haben die Spalte
+      // noch nicht; dann wird zur Laufzeit normalisiert (langsamer, aber
+      // funktionsgleich).
+      const hasNorm = hasStopNameNorm(d);
+      const col = hasNorm ? 'stop_name_norm' : NORMALIZE_SQL('stop_name');
+
+      const stmt = d.prepare(`
+        SELECT stop_name,
+               MIN(stop_id)      AS stop_id,
+               COUNT(*)          AS variants,
+               MIN(stop_lat)     AS stop_lat,
+               MIN(stop_lon)     AS stop_lon,
+               MAX(location_type) AS location_type
+        FROM stops
+        WHERE ${col} LIKE ?
+        GROUP BY stop_name
+        ORDER BY
+          CASE WHEN ${col} LIKE ? THEN 0 ELSE 1 END,  -- Treffer am Wortanfang zuerst
+          LENGTH(stop_name),                          -- kurze Namen = meist die Hauptstation
+          stop_name
+        LIMIT ?
+      `);
+
+      const needle = normalizeForSearch(q);
+      let rows = stmt.all(`%${needle}%`, `${needle}%`, limit);
+
+      // Rueckfall fuer die deutsche Umschreibung: wer "zuerich" tippt, meint
+      // "Zürich". Erst als zweiter Versuch, damit echte "ue"-Namen wie
+      // "Neuenburg" bei der normalen Suche nicht verstuemmelt werden.
+      if (!rows.length) {
+        const collapsed = needle.replace(/ue/g, 'u').replace(/oe/g, 'o').replace(/ae/g, 'a');
+        if (collapsed !== needle) {
+          rows = stmt.all(`%${collapsed}%`, `${collapsed}%`, limit);
+        }
+      }
+
+      res.json({ count: rows.length, suggestions: rows });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // REST API für Frontend - SQL-Query Endpoint
