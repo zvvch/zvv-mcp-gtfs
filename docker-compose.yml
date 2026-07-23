@@ -22,15 +22,22 @@ services:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
 
   # Cloudflare-Bridge. Startet nur mit: docker compose --profile tunnel up -d
+  #
+  # Named Tunnel mit LOKALEN Credentials: die Ingress-Regel steht hier
+  # (--url zeigt auf den gtfs-Service im Compose-Netz), nicht im Dashboard.
+  # Der Windows-cloudflared-Dienst auf dem Host bleibt davon unberuehrt.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
     restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      # Kein ":?"-Guard: Compose interpoliert die Datei vor der Profil-Auswahl,
-      # ein Pflichtwert hier wuerde auch den profillosen Standardstart brechen.
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    command: >
+      tunnel --no-autoupdate
+      --url http://gtfs:3000
+      --credentials-file /etc/cloudflared/creds.json
+      run ${TUNNEL_ID:-}
+    volumes:
+      # Credentials-JSON aus cloudflared tunnel create -- niemals ins Repo.
+      - ${CF_CREDENTIALS_FILE:-/dev/null}:/etc/cloudflared/creds.json:ro
     depends_on:
       - gtfs
 
@@ -38,4 +45,7 @@ volumes:
   gtfs-data:
     # Fester Name statt Projekt-Praefix: die 5.3-GB-Datenbank soll ein
     # Umbenennen des Verzeichnisses oder des Compose-Projekts ueberleben.
+    # external: das Volume wird bewusst ausserhalb des Compose-Lebenszyklus
+    # gehalten -- ein "docker compose down -v" darf 5.3 GB nicht wegraeumen.
     name: zvv-gtfs-data
+    external: true
