@@ -1049,6 +1049,14 @@
               <svg class="toc-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
               Pipeline
             </a>
+            <a href="#doc-auth" data-section="doc-auth">
+              <svg class="toc-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
+              Endpunkte &amp; Anmeldung
+            </a>
+            <a href="#doc-eigenheiten" data-section="doc-eigenheiten">
+              <svg class="toc-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+              Eigenheiten der Daten
+            </a>
             <a href="#doc-modell" data-section="doc-modell">
               <svg class="toc-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg>
               GTFS-Datenmodell
@@ -1195,13 +1203,14 @@
               <div class="mermaid-wrap">
                 <pre class="mermaid">
 flowchart TD
-    A["opentransportdata.swiss"]:::source -->|"download-gtfs.js"| B["GTFS ZIP · ~320 MB"]:::file
-    B -->|"Entpacken"| C["CSV-Dateien · 9 Dateien"]:::file
-    C -->|"import-gtfs.js"| D[("SQLite DB · ~2.7 GB")]:::db
-    D --> E["MCP Server · Express.js"]:::server
-    E -->|"POST /mcp"| F["KI / LLM"]:::client
-    E -->|"POST /api/query"| G["Frontend"]:::client
-    E -->|"GET /health"| H["Monitoring"]:::client
+    A["opentransportdata.swiss"]:::source -->|"download-gtfs.js"| B["GTFS ZIP · ~190 MB"]:::file
+    B -->|"Entpacken"| C["CSV-Dateien · 10 Tabellen · ~2.9 GB"]:::file
+    C -->|"import-gtfs.js"| D[("SQLite · 41 Mio. Zeilen · ~5.3 GB")]:::db
+    D --> E["Express-Server"]:::server
+    E -->|"POST /mcp · anonym"| F["ChatGPT · Claude"]:::client
+    E -->|"POST /mcp-admin · geschützt"| I["Analysen mit freiem SQL"]:::client
+    E -->|"POST /api/query"| G["Diese Oberfläche"]:::client
+    E -->|"GET /health"| H["Überwachung"]:::client
 
     classDef source fill:#172554,stroke:#3b82f6,stroke-width:2px,color:#93c5fd,font-weight:600
     classDef file fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#86efac,font-weight:600
@@ -1210,9 +1219,129 @@ flowchart TD
     classDef client fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fcd34d,font-weight:600
                 </pre>
               </div>
+
+              <p style="margin-top:18px"><strong>Wie der Import mit 28 Mio. Zeilen umgeht.</strong> Die grösste Datei <code>stop_times.txt</code> ist 1.7 GB gross. Sie wird zeilenweise gestreamt statt geladen, und in Blöcken von 10&#39;000 Zeilen je Transaktion geschrieben.</p>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+sequenceDiagram
+    participant F as CSV · 1.7 GB
+    participant R as readline
+    participant B as Stapel · 10'000
+    participant D as SQLite
+
+    Note over D: synchronous=OFF · cache 64 MB
+    F->>R: createReadStream
+    R->>D: Kopfzeile → CREATE TABLE
+    loop je Datenzeile
+        R->>B: geparste Felder
+        alt Stapel voll
+            B->>D: eine Transaktion, 10'000 INSERT
+        end
+    end
+    B->>D: Rest
+    D->>D: CREATE INDEX (erst jetzt)
+    Note over D: synchronous=NORMAL
+                </pre>
+              </div>
+              <p>Drei Entscheidungen tragen die Laufzeit von rund dreieinhalb Minuten für 41 Mio. Zeilen: <strong>Stapel statt Einzel-Inserts</strong> (ein Commit statt zehntausender), <strong>Indexe erst am Schluss</strong> (sonst pflegt jeder Insert alle Indexe mit) und <strong>gelockerte Synchronisierung</strong> während des Imports. Der CSV-Parser ist selbst geschrieben — für GTFS reicht das, und im heissen Pfad zählt jede vermiedene Indirektion.</p>
+            </div>
+
+            <!-- Endpunkte und Anmeldung -->
+            <div class="doc-section" id="doc-auth">
+              <div class="doc-heading">
+                <svg class="section-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
+                <h4>Endpunkte und Anmeldung</h4>
+                <a href="#doc-auth" class="anchor-link" title="Link zu diesem Abschnitt" onclick="copyDocLink('doc-auth'); return false;">#</a>
+              </div>
+              <p>Es gibt zwei MCP-Endpunkte. Der öffentliche trägt nur lesende Fachabfragen und braucht keine Anmeldung; die freie SQL-Abfrage liegt hinter dem geschützten.</p>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+flowchart TD
+    REQ["Anfrage"]:::client --> W{"Welcher Endpunkt?"}
+    W -->|"/mcp"| PUB["7 lesende Tools"]:::ok
+    PUB --> DB[("SQLite")]:::db
+    W -->|"/mcp-admin · /api/*"| A{"Anmeldung gültig?"}
+    A -->|"PIN als Bearer"| OK["Zugriff"]:::ok
+    A -->|"OAuth-Token"| AUD{"Audience passt?"}
+    A -->|"Sitzungscookie"| OK
+    A -->|"nichts davon"| F1["401 · Verweis auf Metadaten"]:::bad
+    AUD -->|"ja"| OK
+    AUD -->|"nein"| F2["401 · invalid_token"]:::bad
+    OK --> DB
+    F1 --> L{"10 Fehlversuche?"}
+    F2 --> L
+    L -->|"ja"| BAN["429 · IP 15 min gesperrt"]:::bad
+    L -->|"nein"| E["Antwort"]:::client
+
+    classDef client fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fcd34d,font-weight:600
+    classDef ok fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#86efac,font-weight:600
+    classDef bad fill:#450a0a,stroke:#ef4444,stroke-width:2px,color:#fca5a5,font-weight:600
+    classDef db fill:#1e1b4b,stroke:#a78bfa,stroke-width:2px,color:#c4b5fd,font-weight:600
+                </pre>
+              </div>
+              <p>Alle Anmeldewege teilen sich denselben Fehlversuchszähler. Sonst wäre jeder neue Weg ein Schlupfloch am Schutz vorbei.</p>
             </div>
 
             <!-- GTFS-Datenmodell -->
+            <!-- Eigenheiten der Schweizer Daten -->
+            <div class="doc-section" id="doc-eigenheiten">
+              <div class="doc-heading">
+                <svg class="section-icon" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+                <h4>Eigenheiten der Schweizer Daten</h4>
+                <a href="#doc-eigenheiten" class="anchor-link" title="Link zu diesem Abschnitt" onclick="copyDocLink('doc-eigenheiten'); return false;">#</a>
+              </div>
+
+              <p><strong>Haltestellen-Kennungen.</strong> Seit dem Fahrplan 2026-07 nutzt der Feed SLOID-Kennungen; die bekannten DIDOK-Nummern kommen nicht mehr vor. Aus <code>8503000</code> wurde <code>ch:1:sloid:3000</code>. Alte Nummern werden übersetzt, damit sie weiter funktionieren.</p>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+flowchart TD
+    IN["Eingabe<br/>ID · alte Nummer · Name"]:::client --> ID{"Trifft eine stop_id?"}
+    ID -->|"ja"| EDGES["Haltekanten sammeln"]:::ok
+    ID -->|"nein"| DK{"Muster 85xxxxx?"}
+    DK -->|"ja"| CONV["8503000 → ch:1:sloid:3000"]:::warn
+    CONV --> ID
+    DK -->|"nein"| NAME["Namenssuche<br/>wortweise, ohne Diakritika"]:::warn
+    NAME --> HIT{"Treffer?"}
+    HIT -->|"nein"| ERR["Fehler melden<br/>NICHT leer antworten"]:::bad
+    HIT -->|"ja"| BEST["besten Namen wählen"]:::ok
+    BEST --> EDGES
+    EDGES --> E1["Station"]:::ok
+    EDGES --> E2["Elternstation"]:::ok
+    EDGES --> E3["Gleise · :3:4"]:::ok
+    EDGES --> E4["Varianten · Name, Bahnhof"]:::ok
+
+    classDef client fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fcd34d,font-weight:600
+    classDef ok fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#86efac,font-weight:600
+    classDef warn fill:#172554,stroke:#3b82f6,stroke-width:2px,color:#93c5fd,font-weight:600
+    classDef bad fill:#450a0a,stroke:#ef4444,stroke-width:2px,color:#fca5a5,font-weight:600
+                </pre>
+              </div>
+              <p>Der letzte Zweig ist der unscheinbarste und zugleich wichtigste: Bahn und Tram haben am selben Ort <em>getrennte</em> Haltestellen ohne gemeinsame Elternstation. Ohne ihn findet man von Bellevue aus keine Tram nach Stadelhofen.</p>
+
+              <p style="margin-top:18px"><strong>Nachtkurse nach Mitternacht.</strong> GTFS ordnet eine Fahrt um 00:30 dem Betriebstag <em>davor</em> zu und schreibt sie als <code>24:30:00</code>. Der Feed enthält rund 1.3 Mio. solcher Haltezeiten.</p>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+flowchart LR
+    Q["Anfrage:<br/>heute ab 00:15"]:::client
+    subgraph GESTERN["Betriebstag gestern"]
+        G1["23:30"]:::warn --> G2["24:30<br/>= heute 00:30"]:::warn --> G3["25:10<br/>= heute 01:10"]:::warn
+    end
+    subgraph HEUTE["Betriebstag heute"]
+        H1["00:15"]:::ok --> H2["05:30"]:::ok --> H3["12:00"]:::ok
+    end
+    Q -.->|"Zweig 1 · ab 00:15:00"| HEUTE
+    Q -.->|"Zweig 2 · ab 24:15:00"| GESTERN
+
+    classDef client fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fcd34d,font-weight:600
+    classDef ok fill:#052e16,stroke:#22c55e,stroke-width:2px,color:#86efac,font-weight:600
+    classDef warn fill:#1e1b4b,stroke:#a78bfa,stroke-width:2px,color:#c4b5fd,font-weight:600
+                </pre>
+              </div>
+              <p>Deshalb fragt <code>get_stop_departures</code> <strong>zwei Betriebstage</strong> ab und rechnet die Zeiten des zweiten Zweigs auf die Wanduhr zurück. Ohne ihn fehlt um 00:15 der komplette Nachtverkehr — unsichtbar, weil die Antwort nicht leer ist, sondern nur unvollständig.</p>
+
+              <p style="margin-top:18px"><strong>Linientypen.</strong> Der Feed verwendet ausschliesslich die erweiterten HVT-Werte (100–1599), nie die klassischen 0–7. Eine Anfrage nach <code>route_type=2</code> für „Bahn" lieferte deshalb null Treffer. Klassische Werte werden heute automatisch auf die HVT-Bereiche abgebildet.</p>
+            </div>
+
             <div class="doc-section" id="doc-modell">
               <div class="doc-heading">
                 <svg class="section-icon" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg>
@@ -1267,19 +1396,62 @@ flowchart TD
                 über StreamableHTTP-Transport. KI-Clients können sich unter <code>POST /mcp</code> verbinden.</p>
 
               <div class="info-box">
-                <strong>Schnellstart:</strong> In deinem MCP-Client (z.B. Claude Desktop) einfach <code>https://gtfs.zvv.dev/mcp</code> als Server-URL eintragen – fertig!
+                <strong>Schnellstart:</strong> <code>https://gtfs.zvv.dev/mcp</code> als Server-URL eintragen, Authentifizierung auf „keine" – fertig. Die sieben Fachabfragen sind ohne Anmeldung nutzbar.
               </div>
 
-              <p><strong>Verfügbare MCP-Tools:</strong></p>
+              <p><strong>Tools auf <code>/mcp</code> (öffentlich):</strong></p>
               <table>
                 <tr><th>Tool</th><th>Beschreibung</th></tr>
-                <tr><td><code>search_stops</code></td><td>Textsuche nach Haltestellen (Name, Limit)</td></tr>
-                <tr><td><code>get_routes</code></td><td>Linien filtern nach Typ und/oder Agency</td></tr>
-                <tr><td><code>get_departures</code></td><td>Abfahrten ab einer Haltestelle (Stop-ID, Datum, Uhrzeit)</td></tr>
-                <tr><td><code>get_trip_details</code></td><td>Alle Halte einer bestimmten Fahrt</td></tr>
-                <tr><td><code>get_agencies</code></td><td>Alle Verkehrsunternehmen auflisten</td></tr>
-                <tr><td><code>query_gtfs</code></td><td>Freie SQL-SELECT-Abfrage (nur lesend, mit Sicherheitsfilter)</td></tr>
+                <tr><td><code>search_stops</code></td><td>Haltestellen nach Namen suchen, tolerant gegenüber Schreibweisen</td></tr>
+                <tr><td><code>get_stop_departures</code></td><td>Abfahrten ab einer Haltestelle, inklusive Nachtkursen</td></tr>
+                <tr><td><code>get_connections</code></td><td>Direkte Verbindungen zwischen zwei Haltestellen</td></tr>
+                <tr><td><code>get_trip</code></td><td>Alle Halte einer Fahrt in Reihenfolge</td></tr>
+                <tr><td><code>get_routes</code></td><td>Linien nach Nummer, Unternehmen oder Verkehrsmittel</td></tr>
+                <tr><td><code>get_agencies</code></td><td>Verkehrsunternehmen mit Anzahl Linien</td></tr>
+                <tr><td><code>get_dataset_info</code></td><td>Geladener Fahrplan und Umfang der Tabellen</td></tr>
               </table>
+
+              <p><strong>Zusätzlich auf <code>/mcp-admin</code> (geschützt):</strong></p>
+              <table>
+                <tr><th>Tool</th><th>Beschreibung</th></tr>
+                <tr><td><code>query_gtfs</code></td><td>Freie lesende SQL-Abfrage</td></tr>
+              </table>
+
+              <div class="info-box">
+                <strong>Datumsformat:</strong> <code>date</code> erwartet <code>YYYYMMDD</code>, <code>time_from</code> erwartet <code>HH:MM:SS</code> – das ist die GTFS-Konvention, nicht ISO 8601. Also <code>20260724</code> statt <code>2026-07-24</code>.
+              </div>
+
+              <p><strong>Anmeldung am geschützten Endpunkt.</strong> Neben einem festen Token per Header gibt es einen vollständigen OAuth-Ablauf mit PKCE – gedacht für Clients, die keinen Header hinterlegen können:</p>
+              <div class="mermaid-wrap">
+                <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as Server
+    participant U as Du im Browser
+
+    C->>S: POST /mcp-admin (ohne Token)
+    S-->>C: 401 + Verweis auf Metadaten
+    C->>S: Metadaten abrufen
+    S-->>C: authorize · token · register · S256
+    C->>S: POST /register
+    S-->>C: client_id
+    Note over C: Verifier erzeugen<br/>Challenge = SHA256(Verifier)
+    C->>U: Browser öffnen
+    U->>S: GET /authorize
+    S-->>U: Zustimmungsseite mit PIN
+    U->>S: POST /authorize + PIN
+    S-->>U: 302 zurück, mit Code
+    U->>C: Code
+    C->>S: POST /token (Code + Verifier)
+    Note over S: Signatur · Ablauf · PKCE<br/>Code schon benutzt?
+    S-->>C: Zugriffstoken 1 h + Erneuerung 30 d
+    C->>S: POST /mcp-admin + Token
+    S-->>C: 8 Tools inklusive query_gtfs
+                </pre>
+              </div>
+              <p>Der Client sieht den PIN nie – er öffnet nur den Browser und erhält am Ende einen Code. Das ist der Gewinn gegenüber einem fest hinterlegten Token.</p>
+
               <p><strong>MCP-Ressourcen:</strong></p>
               <table>
                 <tr><th>URI</th><th>Beschreibung</th></tr>
@@ -1507,6 +1679,8 @@ fetch('/api/query', {
       }
       if (!state.protected || state.authenticated) {
         document.body.classList.remove('locked');
+        // Das Doku-Panel war bis eben verdeckt -- Diagramme jetzt nachziehen.
+        if (typeof ensureMermaid === 'function') ensureMermaid();
         return;
       }
 
@@ -1516,6 +1690,7 @@ fetch('/api/query', {
         const pin = await askForToken('Zugang zum ZVV GTFS Explorer. Bitte PIN eingeben.');
         if (pin && await login(pin)) {
           document.body.classList.remove('locked');
+          if (typeof ensureMermaid === 'function') ensureMermaid();
           return;
         }
         await new Promise(r => setTimeout(r, 250));
@@ -2290,12 +2465,43 @@ fetch('/api/query', {
     // --- Docs ---
     let docsLoaded = false;
     let mermaidRendered = false;
-    async function loadDocs() {
-      // Mermaid erst rendern, wenn das Panel sichtbar ist
-      if (!mermaidRendered) {
-        mermaidRendered = true;
-        try { await mermaid.run(); } catch {}
+    /**
+     * Rendert die Mermaid-Diagramme, sobald das Panel wirklich sichtbar ist.
+     *
+     * Wichtig: die Erledigt-Marke wird erst NACH einem erfolgreichen Lauf
+     * gesetzt. Vorher stand sie davor, wodurch ein zu frueher Versuch --
+     * etwa waehrend die Seite noch durch die PIN-Abfrage gesperrt ist --
+     * dauerhaft verhinderte, dass die Diagramme je erscheinen. Der
+     * urspruengliche catch verschluckte den Fehlschlag zudem lautlos.
+     */
+    async function ensureMermaid(versuch = 0) {
+      if (mermaidRendered || typeof mermaid === 'undefined') return;
+      const offen = document.querySelectorAll('pre.mermaid:not([data-processed])');
+      if (!offen.length) { mermaidRendered = true; return; }
+
+      // Ein unsichtbares Panel liefert keine Masse -- dann spaeter nochmal.
+      const panel = document.getElementById('panel-docs');
+      if (panel && panel.offsetParent === null && versuch < 20) {
+        return void setTimeout(() => ensureMermaid(versuch + 1), 150);
       }
+
+      try {
+        await mermaid.run({ nodes: offen });
+      } catch (err) {
+        console.warn('Mermaid konnte nicht rendern:', err);
+      }
+
+      const alle = document.querySelectorAll('pre.mermaid');
+      const fertig = [...alle].filter(p => p.querySelector('svg')).length;
+      if (fertig === alle.length) {
+        mermaidRendered = true;
+      } else if (versuch < 20) {
+        setTimeout(() => ensureMermaid(versuch + 1), 200);
+      }
+    }
+
+    async function loadDocs() {
+      ensureMermaid();
       if (docsLoaded) return;
       try {
         const data = await apiCall('/health');

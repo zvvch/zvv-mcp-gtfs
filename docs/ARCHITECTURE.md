@@ -29,6 +29,79 @@ flowchart TD
 
 SQLite wurde gewählt, weil der Datensatz **statisch** ist: er ändert sich alle paar Wochen einmal, wird nie geschrieben und passt auf eine Platte. Die Datenbank wird readonly geöffnet — schon das schliesst eine ganze Fehlerklasse aus.
 
+### Der Import im Detail
+
+Die Herausforderung ist die Grösse: `stop_times.txt` allein ist 1.7 GB mit 28 Mio. Zeilen. Die Datei wird deshalb **gestreamt**, nie vollständig geladen, und in Blöcken von 10'000 Zeilen je Transaktion geschrieben.
+
+```mermaid
+sequenceDiagram
+    participant F as CSV-Datei<br/>(1.7 GB)
+    participant R as readline<br/>Zeilenstrom
+    participant P as parseCSVLine
+    participant B as Stapel<br/>(10'000 Zeilen)
+    participant D as SQLite
+
+    Note over D: PRAGMA synchronous=OFF<br/>cache_size=64 MB
+    F->>R: createReadStream
+    R->>P: erste Zeile = Kopfzeile
+    P->>D: CREATE TABLE<br/>(nur vorhandene Spalten)
+    P->>D: INSERT vorbereiten
+
+    loop je Datenzeile
+        R->>P: Zeile
+        P->>B: Feldwerte
+        alt Stapel voll
+            B->>D: db.transaction(10'000 INSERT)
+            Note right of D: ein Commit statt<br/>10'000 einzelne
+        end
+    end
+
+    B->>D: Rest-Stapel
+    D->>D: CREATE INDEX (erst jetzt)
+    Note over D: PRAGMA synchronous=NORMAL
+```
+
+Drei Entscheidungen tragen die Laufzeit von rund dreieinhalb Minuten für 41 Mio. Zeilen:
+
+| Entscheidung | Wirkung |
+|---|---|
+| Stapel von 10'000 Zeilen je Transaktion | ein Commit statt zehntausender — der grösste Hebel |
+| Indexe **nach** dem Import | jeder Insert müsste sonst alle Indexe mitpflegen |
+| `synchronous = OFF` während des Imports | keine Synchronisierung auf die Platte je Commit |
+
+`synchronous = OFF` ist vertretbar, weil ein Absturz während des Imports ohnehin einen Neuaufbau nach sich zieht — es geht nichts verloren, was nicht ersetzbar wäre. Danach wird auf `NORMAL` zurückgestellt.
+
+Der CSV-Parser ist selbst geschrieben statt einer Bibliothek entnommen. Er behandelt Anführungszeichen, verdoppelte Anführungszeichen als Escape und leere Felder — mehr braucht GTFS nicht, und im heissen Pfad zählt jede vermiedene Indirektion.
+
+### Anfrage und Anmeldung
+
+```mermaid
+flowchart TD
+    REQ["Anfrage"] --> WHICH{"Welcher<br/>Endpunkt?"}
+
+    WHICH -->|"POST /mcp"| PUB["7 lesende Tools"]
+    PUB --> DB[("SQLite")]
+
+    WHICH -->|"POST /mcp-admin"| AUTH{"Anmeldung<br/>gültig?"}
+    WHICH -->|"/api/*"| AUTH
+
+    AUTH -->|"Bearer = PIN"| OK["Zugriff"]
+    AUTH -->|"Bearer = OAuth-Token"| AUD{"Audience<br/>passt?"}
+    AUTH -->|"Sitzungscookie"| OK
+    AUTH -->|"nichts davon"| FAIL["401 + Verweis auf<br/>Ressourcen-Metadaten"]
+
+    AUD -->|"ja"| OK
+    AUD -->|"nein"| INV["401 invalid_token"]
+
+    OK --> DB
+    FAIL --> LOCK{"10 Fehlversuche<br/>erreicht?"}
+    INV --> LOCK
+    LOCK -->|"ja"| BAN["429 · IP 15 min gesperrt"]
+    LOCK -->|"nein"| END["Antwort"]
+```
+
+Der öffentliche Pfad kennt keine Abzweigung — er führt direkt zur Datenbank. Alles, was Anmeldung verlangt, teilt sich denselben Fehlversuchszähler; sonst wäre jeder neue Anmeldeweg ein Schlupfloch am Schutz vorbei.
+
 ---
 
 ## Eigenheiten der Schweizer GTFS-Daten
@@ -52,6 +125,31 @@ Die Umrechnung: `85` entfernen, führende Nullen entfernen, `ch:1:sloid:` davors
 
 Wichtiger als die Umrechnung ist die zweite Lehre: **eine unbekannte ID muss als Fehler gemeldet werden, nicht als leeres Ergebnis.** Genau dieses stille Nichts hatte den Fehler wochenlang verdeckt.
 
+So läuft die Auflösung heute — eine Eingabe kann eine ID, eine alte Nummer oder ein Name sein:
+
+```mermaid
+flowchart TD
+    IN["Eingabe<br/>ID · alte Nummer · Name"] --> ID{"Trifft eine<br/>stop_id?"}
+    ID -->|"ja"| EDGES["Haltekanten sammeln"]
+    ID -->|"nein"| DIDOK{"Muster 85xxxxx?"}
+
+    DIDOK -->|"ja"| CONV["85 weg, Nullen weg<br/>8503000 → ch:1:sloid:3000"]
+    CONV --> ID
+    DIDOK -->|"nein"| NAME["Namenssuche<br/>wortweise, ohne Diakritika"]
+
+    NAME --> HIT{"Treffer?"}
+    HIT -->|"nein"| ERR["Fehler melden<br/>NICHT leer antworten"]
+    HIT -->|"ja"| BEST["besten Namen wählen<br/>Vergleich ohne Satzzeichen"]
+    BEST --> EDGES
+
+    EDGES --> E1["Station selbst"]
+    EDGES --> E2["Elternstation<br/>Parent…"]
+    EDGES --> E3["Gleise und Kanten<br/>…:3:4"]
+    EDGES --> E4["Namensvarianten<br/>Name, Bahnhof"]
+```
+
+Der letzte Zweig ist der unscheinbarste und zugleich wichtigste: Bahn und Tram haben am selben Ort getrennte Haltestellen ohne gemeinsame Elternstation. Ohne ihn findet man von Bellevue aus keine Tram nach Stadelhofen.
+
 ### Erweiterte Linientypen (HVT)
 
 Der Feed verwendet ausschliesslich die **erweiterten** `route_type`-Werte (100–1599), nie die klassischen 0–7:
@@ -71,7 +169,23 @@ GTFS kodiert Fahrten nach Mitternacht im Service-Tag **davor**, mit Zeiten über
 00:30 heute  ≙  24:30:00 im Service-Tag von gestern
 ```
 
-Der Feed enthält **rund 1.3 Mio. solcher Haltezeiten**; an einem Knoten wie Zürich HB sind es mehrere hundert je Betriebstag. `get_stop_departures` fragt deshalb zwei Betriebstage ab — den heutigen ab der Startzeit und den gestrigen ab Startzeit + 24 h — und rechnet die Zeiten des zweiten auf die Wanduhr zurück.
+Der Feed enthält **rund 1.3 Mio. solcher Haltezeiten**; an einem Knoten wie Zürich HB sind es mehrere hundert je Betriebstag.
+
+```mermaid
+flowchart LR
+    subgraph GESTERN["Betriebstag gestern"]
+        G1["22:00"] --> G2["23:30"] --> G3["24:30<br/>= heute 00:30"] --> G4["25:10<br/>= heute 01:10"]
+    end
+    subgraph HEUTE["Betriebstag heute"]
+        H1["00:15"] --> H2["05:30"] --> H3["12:00"]
+    end
+    Q["Anfrage:<br/>heute ab 00:15"] -.->|"Zweig 1<br/>ab 00:15:00"| HEUTE
+    Q -.->|"Zweig 2<br/>ab 24:15:00"| GESTERN
+```
+
+`get_stop_departures` fragt deshalb **zwei Betriebstage** ab: den heutigen ab der Startzeit und den gestrigen ab Startzeit plus 24 Stunden. Die Ergebnisse des zweiten Zweigs werden auf die Wanduhr zurückgerechnet (`24:30` wird zu `00:30`) und mit dem ersten nach tatsächlicher Uhrzeit zusammensortiert.
+
+Ohne den zweiten Zweig fehlt um 00:15 der komplette Nachtverkehr — und zwar unsichtbar, weil die Antwort nicht leer ist, sondern nur unvollständig.
 
 > Alle konkreten Zahlen in diesem Dokument sind Momentaufnahmen. Der Feed wird alle paar Wochen neu veröffentlicht, die Grössenordnungen bleiben aber stabil. Den aktuellen Stand liefert `get_dataset_info` oder `GET /health`.
 
@@ -165,6 +279,41 @@ Alle Artefakte werden mit **demselben** Secret signiert. Ohne Typkennzeichen im 
 ### Einmalverwendung der Codes
 
 Ein signierter Code ist für sich beliebig oft einlösbar. Ein gedeckeltes In-Memory-Set verhindert die zweite Einlösung. Weil es nach einem Neustart leer ist, leben Codes nur **60 Sekunden** — das Replay-Fenster ist damit winzig.
+
+### Der Ablauf
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client<br/>(ChatGPT)
+    participant S as Server
+    participant U as Du<br/>(Browser)
+
+    C->>S: POST /mcp-admin (ohne Token)
+    S-->>C: 401 + resource_metadata="…/mcp-admin"
+    C->>S: GET /.well-known/oauth-protected-resource/mcp-admin
+    S-->>C: { resource, authorization_servers }
+    C->>S: GET /.well-known/oauth-authorization-server
+    S-->>C: { authorize, token, register, S256 }
+    C->>S: POST /register { redirect_uris }
+    S-->>C: client_id (= signierte Registrierung)
+
+    Note over C: Verifier erzeugen<br/>Challenge = SHA256(Verifier)
+    C->>U: Browser öffnen: /authorize?…&code_challenge=…
+    U->>S: GET /authorize
+    S-->>U: Zustimmungsseite mit PIN-Feld
+    U->>S: POST /authorize + PIN
+    S-->>U: 302 zurück zum Client, mit code
+    U->>C: code
+
+    C->>S: POST /token { code, code_verifier }
+    Note over S: Signatur prüfen · Ablauf prüfen<br/>SHA256(Verifier) == Challenge?<br/>Code schon benutzt?
+    S-->>C: access_token (1 h) + refresh_token (30 d)
+    C->>S: POST /mcp-admin + Bearer access_token
+    S-->>C: 8 Tools inkl. query_gtfs
+```
+
+Der Client sieht den PIN nie — er öffnet nur den Browser und bekommt am Ende einen Code zurück. Das ist der eigentliche Gewinn gegenüber einem fest hinterlegten Token.
 
 ### Discovery muss zusammenpassen
 
